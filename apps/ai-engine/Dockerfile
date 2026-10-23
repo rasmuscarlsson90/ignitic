@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir uv
+RUN pip install --no-cache-dir uv==0.12.23
 
 WORKDIR /workspace/ai-engine
 
@@ -23,10 +23,11 @@ COPY apps/ai-engine/pyproject.toml apps/ai-engine/uv.lock ./
 RUN RUSTFLAGS="--cfg reqwest_unstable" uv sync --frozen --no-dev --no-install-project
 
 COPY apps/ai-engine/ ./
+RUN uv sync --frozen --no-dev
 
 EXPOSE 8010
 
 HEALTHCHECK --interval=15s --timeout=10s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:8010/health || exit 1
 
-CMD ["uv", "run", "python", "main.py"]
+CMD [".venv/bin/python", "main.py"]

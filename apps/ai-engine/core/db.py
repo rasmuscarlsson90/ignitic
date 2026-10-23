@@ -48,13 +48,14 @@ async def init_db():
         Exception: If database connection fails
     """
     try:
-        logger.info(f"🔗 Connecting to MongoDB at: {MONGODB_URI}")
+        # Connection URIs can contain credentials; keep them out of application logs.
+        logger.info("🔗 Connecting to MongoDB")
         # Create motor client
         client = motor.motor_asyncio.AsyncIOMotorClient(MONGODB_URI)
 
         # Test connection
         await client.admin.command("ping")
-        logger.info(f"✅ MongoDB connection successful: {MONGODB_URI}")
+        logger.info("✅ MongoDB connection successful")
 
         # Initialize Beanie with document models
         await init_beanie(

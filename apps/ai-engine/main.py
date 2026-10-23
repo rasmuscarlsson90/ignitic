@@ -92,7 +92,7 @@ async def lifespan(app: FastAPI):
         # Initialize Graphiti knowledge-graph client (long-term memory)
         try:
             # await init_graphiti_client()
-            logger.info("✅ Graphiti knowledge-graph client initialized successfully")
+            logger.info("Graphiti knowledge-graph initialization is disabled")
         except Exception as graphiti_err:
             logger.warning(
                 f"⚠️  Graphiti client failed to initialize – long-term memory will "

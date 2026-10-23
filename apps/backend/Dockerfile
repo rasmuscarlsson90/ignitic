@@ -1,5 +1,7 @@
 # Build stage
-FROM golang:1.23-alpine AS builder
+FROM golang:1.26-alpine AS builder
+
+ENV GOTOOLCHAIN=local
 
 # Set working directory
 WORKDIR /app
@@ -17,31 +19,29 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
+RUN CGO_ENABLED=0 GOOS=linux go build -p=4 -trimpath -o main .
 
 # Final stage
-FROM alpine:latest
+FROM alpine:3.23
 
 # Install ca-certificates for HTTPS requests
 RUN apk --no-cache add ca-certificates
 
 # Create non-root user
-RUN adduser -D -s /bin/sh appuser
+RUN adduser -D -h /app -s /bin/sh appuser
 
-WORKDIR /root/
+WORKDIR /app
 
 # Copy the binary from builder stage
-COPY --from=builder /app/main .
+COPY --from=builder --chown=appuser:appuser /app/main .
 
 # Copy database migrations
-COPY --from=builder /app/database/migrations ./database/migrations
+COPY --from=builder --chown=appuser:appuser /app/database/migrations ./database/migrations
 
-# Change ownership to appuser
-RUN chown -R appuser:appuser /root/
 USER appuser
 
 # Expose port
 EXPOSE 8080
 
 # Run the application
-CMD ["./main"] 
+CMD ["./main"]

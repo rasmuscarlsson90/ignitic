@@ -1,0 +1,365 @@
+# Review-only deployment plan. Applying this Blueprint creates PAID resources.
+# See docs/render-deployment.md for the budget, required inputs and limitations.
+# No external integrations or LLM credentials are enabled by default.
+# yaml-language-server: $schema=https://render.com/schema/render.yaml.json
+previews:
+  generation: "off"
+
+services:
+  - type: web
+    name: ignitic-frontend
+    runtime: docker
+    region: frankfurt
+    plan: standard
+    numInstances: 1
+    autoDeployTrigger: "off"
+    rootDir: apps/frontend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/auth/providers
+    dockerCommand: >-
+      /bin/sh -ec 'export API_INTERNAL_URL="http://$BACKEND_HOST:8080";
+      export NEXTAUTH_URL="$PUBLIC_FRONTEND_URL";
+      exec node server.js'
+    envVars:
+      - key: PORT
+        value: "3000"
+      - key: HOSTNAME
+        value: 0.0.0.0
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
+      # This value is also a Docker build argument, inlined by Next.js.
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          name: ignitic-backend
+          type: web
+          envVarKey: PUBLIC_API_URL
+      - key: PUBLIC_FRONTEND_URL
+        fromService:
+          name: ignitic-backend
+          type: web
+          envVarKey: FRONTEND_URL
+      - key: BACKEND_HOST
+        fromService:
+          name: ignitic-backend
+          type: web
+          property: host
+      - key: NEXTAUTH_SECRET
+        generateValue: true
+
+  - type: web
+    name: ignitic-backend
+    runtime: docker
+    region: frankfurt
+    plan: starter
+    numInstances: 1
+    autoDeployTrigger: "off"
+    rootDir: apps/backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    dockerCommand: >-
+      /bin/sh -ec 'export AI_ENGINE_URL="http://$AI_ENGINE_HOST:8010";
+      export RABBITMQ_URL="amqp://ignitic:$RABBITMQ_PASSWORD@$RABBITMQ_HOST:5672/";
+      export CORS_ALLOWED_ORIGINS="$FRONTEND_URL";
+      exec ./main'
+    envVars:
+      - fromGroup: ignitic-shared-auth
+      - key: PORT
+        value: "8080"
+      - key: SERVER_PORT
+        value: "8080"
+      - key: ENVIRONMENT
+        value: production
+      - key: FRONTEND_URL
+        sync: false
+      - key: PUBLIC_API_URL
+        sync: false
+      # Required: standard base64 encoding of exactly 32 random bytes.
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: BACKEND_AUTOMATION_ENABLED
+        value: "false"
+      - key: BACKEND_MAX_WORKERS
+        value: "2"
+      - key: BACKEND_COMPLIANCE_MODE
+        value: SOC2_GDPR
+      - key: AI_ENGINE_HOST
+        fromService:
+          name: ignitic-ai-engine
+          type: pserv
+          property: host
+      - key: DB_HOST
+        fromDatabase:
+          name: ignitic-postgres
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: ignitic-postgres
+          property: port
+      - key: DB_USER
+        fromDatabase:
+          name: ignitic-postgres
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: ignitic-postgres
+          property: password
+      - key: DB_NAME
+        fromDatabase:
+          name: ignitic-postgres
+          property: database
+      - key: DB_SSL_MODE
+        value: require
+      - key: REDIS_HOST
+        fromService:
+          name: ignitic-cache
+          type: keyvalue
+          property: host
+      - key: REDIS_PORT
+        fromService:
+          name: ignitic-cache
+          type: keyvalue
+          property: port
+      - key: RABBITMQ_HOST
+        fromService:
+          name: ignitic-rabbitmq
+          type: pserv
+          property: host
+      - key: RABBITMQ_PASSWORD
+        fromService:
+          name: ignitic-rabbitmq
+          type: pserv
+          envVarKey: RABBITMQ_DEFAULT_PASS
+      - key: OPENROUTER_API_KEY
+        value: ""
+      - key: BREVO_API_KEY
+        value: ""
+      - key: CLOUDINARY_CLOUD_NAME
+        value: ""
+      - key: CLOUDINARY_API_KEY
+        value: ""
+      - key: CLOUDINARY_API_SECRET
+        value: ""
+      - key: GOOGLE_CLIENT_ID
+        value: ""
+      - key: GOOGLE_CLIENT_SECRET
+        value: ""
+      - key: SHOPIFY_CLIENT_ID
+        value: ""
+      - key: SHOPIFY_CLIENT_SECRET
+        value: ""
+      - key: SHOPIFY_SCOPES
+        value: ""
+
+  - type: pserv
+    name: ignitic-ai-engine
+    runtime: docker
+    region: frankfurt
+    plan: pro
+    numInstances: 1
+    autoDeployTrigger: "off"
+    dockerfilePath: ./apps/ai-engine/Dockerfile
+    dockerContext: .
+    dockerCommand: >-
+      /bin/sh -ec 'export BACKEND_BASE_URL="http://$BACKEND_HOST:8080";
+      export MCP_SERVER_URL="http://$MCP_HOST:8011";
+      export RABBITMQ_URL="amqp://ignitic:$RABBITMQ_PASSWORD@$RABBITMQ_HOST:5672/";
+      export MONGO_URI="mongodb://ignitic:$MONGODB_PASSWORD@$MONGODB_HOST:27017/ignitic?authSource=admin&directConnection=true";
+      export NEO4J_URI="bolt://$NEO4J_HOST:7687";
+      exec .venv/bin/python main.py'
+    envVars:
+      - fromGroup: ignitic-shared-auth
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: "8010"
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: DB_NAME
+        value: ignitic
+      - key: MONGO_DB_NAME
+        value: ignitic
+      # Required: Fernet.generate_key(), not an arbitrary generated string.
+      - key: PASS_ENCRYPTION_FERNET_KEY
+        sync: false
+      - key: BACKEND_HOST
+        fromService:
+          name: ignitic-backend
+          type: web
+          property: host
+      - key: MCP_HOST
+        fromService:
+          name: ignitic-mcp
+          type: pserv
+          property: host
+      - key: RABBITMQ_HOST
+        fromService:
+          name: ignitic-rabbitmq
+          type: pserv
+          property: host
+      - key: RABBITMQ_PASSWORD
+        fromService:
+          name: ignitic-rabbitmq
+          type: pserv
+          envVarKey: RABBITMQ_DEFAULT_PASS
+      - key: MONGODB_HOST
+        fromService:
+          name: ignitic-mongo
+          type: pserv
+          property: host
+      - key: MONGODB_PASSWORD
+        fromService:
+          name: ignitic-mongo
+          type: pserv
+          envVarKey: MONGODB_INITDB_ROOT_PASSWORD
+      - key: NEO4J_HOST
+        fromService:
+          name: ignitic-neo4j
+          type: pserv
+          property: host
+      - key: NEO4J_USER
+        value: neo4j
+      - key: NEO4J_PASSWORD
+        fromService:
+          name: ignitic-neo4j
+          type: pserv
+          envVarKey: NEO4J_PASSWORD
+      - key: NEO4J_DATABASE
+        value: neo4j
+      - key: OPENROUTER_API_KEY
+        value: ""
+      - key: APIFY_TOKEN
+        value: ""
+      - key: N8N_API_KEY
+        value: ""
+      - key: N8N_SERVER_URL
+        value: ""
+
+  - type: pserv
+    name: ignitic-mcp
+    runtime: docker
+    region: frankfurt
+    plan: standard
+    numInstances: 1
+    autoDeployTrigger: "off"
+    dockerfilePath: ./apps/mcp/Dockerfile
+    dockerContext: .
+    dockerCommand: >-
+      /bin/sh -ec 'export AI_ENGINE_BASE_URL="http://$AI_ENGINE_HOST:8010";
+      exec .venv/bin/python main.py'
+    envVars:
+      - fromGroup: ignitic-shared-auth
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: "8011"
+      - key: DEBUG
+        value: "false"
+      - key: AI_ENGINE_HOST
+        fromService:
+          name: ignitic-ai-engine
+          type: pserv
+          property: host
+      - key: APIFY_TOKEN
+        value: ""
+
+  - type: keyvalue
+    name: ignitic-cache
+    region: frankfurt
+    plan: starter
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
+
+  - type: pserv
+    name: ignitic-rabbitmq
+    runtime: image
+    image:
+      url: docker.io/library/rabbitmq:3.13-management-alpine
+    region: frankfurt
+    plan: standard
+    numInstances: 1
+    autoDeployTrigger: "off"
+    envVars:
+      - key: PORT
+        value: "5672"
+      - key: RABBITMQ_DEFAULT_USER
+        value: ignitic
+      - key: RABBITMQ_DEFAULT_PASS
+        generateValue: true
+      # Stable node name is required when reusing persisted RabbitMQ data.
+      - key: RABBITMQ_NODENAME
+        value: rabbit@localhost
+      - key: RABBITMQ_ERLANG_COOKIE
+        generateValue: true
+    disk:
+      name: ignitic-rabbitmq-data
+      mountPath: /var/lib/rabbitmq
+      sizeGB: 10
+
+  - type: pserv
+    name: ignitic-mongo
+    runtime: image
+    image:
+      url: docker.io/mongodb/mongodb-atlas-local:8.0
+    region: frankfurt
+    plan: pro
+    numInstances: 1
+    autoDeployTrigger: "off"
+    envVars:
+      - key: PORT
+        value: "27017"
+      - key: MONGODB_INITDB_ROOT_USERNAME
+        value: ignitic
+      - key: MONGODB_INITDB_ROOT_PASSWORD
+        generateValue: true
+    # One disk covers both /data/db and /data/configdb.
+    disk:
+      name: ignitic-mongo-data
+      mountPath: /data
+      sizeGB: 20
+
+  - type: pserv
+    name: ignitic-neo4j
+    runtime: docker
+    dockerfilePath: ./deploy/render/neo4j.Dockerfile
+    dockerContext: ./deploy/render
+    region: frankfurt
+    plan: pro
+    numInstances: 1
+    autoDeployTrigger: "off"
+    envVars:
+      - key: PORT
+        value: "7687"
+      - key: NEO4J_PASSWORD
+        generateValue: true
+      - key: NEO4J_server_memory_heap_initial__size
+        value: 512m
+      - key: NEO4J_server_memory_heap_max__size
+        value: 1G
+      - key: NEO4J_server_memory_pagecache_size
+        value: 512m
+    disk:
+      name: ignitic-neo4j-data
+      mountPath: /data
+      sizeGB: 10
+
+databases:
+  - name: ignitic-postgres
+    region: frankfurt
+    plan: basic-1gb
+    postgresMajorVersion: "16"
+    databaseName: ignitic
+    user: ignitic
+    diskSizeGB: 20
+    ipAllowList: []
+
+envVarGroups:
+  - name: ignitic-shared-auth
+    envVars:
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
