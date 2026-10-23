@@ -66,7 +66,7 @@ def test_default_and_server_key_alone_are_simulated_without_http(db, monkeypatch
 @pytest.mark.parametrize("changes", [
     {"endpoint": "http://localhost/internal"}, {"model": "https://evil.example/model"},
     {"approved_models": ["../model"], "model": "../model"}, {"enabled": "true"},
-    {"max_retries": 3}, {"timeout_seconds": 21}, {"max_output_tokens": 4096},
+    {"max_retries": 3}, {"timeout_seconds": 21}, {"max_output_tokens": 4097},
     {"per_call_limit_sek_minor": 0}, {"prompt_usd_per_million": "NaN"},
 ])
 def test_configuration_is_strict_and_admin_only(db, changes):

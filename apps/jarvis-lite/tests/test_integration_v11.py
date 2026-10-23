@@ -114,6 +114,8 @@ def test_unsubscribe_link_get_is_readonly_and_one_click_post_works_under_stop(ru
 
 @pytest.mark.parametrize("livemode", [True, False])
 def test_explicit_prepayment_signed_receipt_plans_delivery_never_claims_installation(running, monkeypatch, livemode):
+    # Retain the signed-provider receipt contract underneath the v1.2 release lock.
+    monkeypatch.setattr(policy, "INTERNAL_ONLY_RELEASE", False)
     _, db = running
     with db.transaction() as tx:
         lead = tx.create("lead", {"company": "Synthetic Prepayment AB", "email": "info@prepayment.example", "state": "REPLIED",

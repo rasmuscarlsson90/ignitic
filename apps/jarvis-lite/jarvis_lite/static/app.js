@@ -2,8 +2,8 @@
 
 (() => {
   const byId = (id) => document.getElementById(id);
-  const state = { user: null, csrf: null, data: null, refreshing: false, toastTimer: null };
-  const money = new Intl.NumberFormat("sv-SE", { style: "currency", currency: "SEK", maximumFractionDigits: 0 });
+  const state = { user: null, csrf: null, data: null, v12: null, crm: null, crmQuery: null, refreshing: false, toastTimer: null };
+  const money = new Intl.NumberFormat("sv-SE", { style: "currency", currency: "SEK", minimumFractionDigits: 0, maximumFractionDigits: 2 });
   const integer = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 0 });
   const dateFormat = new Intl.DateTimeFormat("sv-SE", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   const roleNames = { admin: "Administratör", operator: "Operatör", viewer: "Läsbehörighet" };
@@ -19,7 +19,9 @@
     QUEUED: "I kö", LEASED: "Bearbetas", RUNNING: "Pågår", FAILED: "Misslyckad", UNCERTAIN: "Behöver granskas",
     DRAFT: "Utkast", APPROVED: "Godkänd", REQUESTED: "Begäran skapad", INITIATED: "Betalning inledd",
     CONFIRMED: "Betalning bekräftad", SENT: "Skickad", DELIVERED: "Levererad", PENDING: "Väntar", DONE: "Klar",
-    RESOLVED: "Granskad", SUPERSEDED: "Sammanförd", BLOCKED: "Spärrad", REVIEW_REQUIRED: "Kräver granskning"
+    RESOLVED: "Granskad", SUPERSEDED: "Sammanförd", BLOCKED: "Spärrad", REVIEW_REQUIRED: "Kräver granskning",
+    IDLE: "Ledig", BUSY: "Arbetar", WAITING: "Väntar", READY: "Redo", TEST_ARTIFACT: "Äldre testartefakt",
+    APPROVED_INTERNAL: "Internt granskad · oskickad", NEEDS_REVIEW: "Behöver granskas", QUALITY_REVIEW: "Kvalitetsgranskning"
   };
   const jobNames = { demo_journey: "Simulerad kundresa", research: "Leadanalys", qualify: "Kvalificering", follow_up: "Uppföljning", daily_report: "Daglig rapport", pipeline_advance: "Förbered nästa affärssteg", source_research: "Granska tillåten researchkälla" };
   const errorNames = {
@@ -73,10 +75,11 @@
     const code = first(payload?.code, payload?.error, detail?.code);
     if (errorNames[code]) return errorNames[code];
     if (status === 401) return "E-postadressen eller lösenordet stämmer inte, eller så har sessionen löpt ut.";
-    if (status === 403) return "Servern tillåter inte den här åtgärden för ditt konto.";
     if (Array.isArray(detail)) return "Kontrollera de angivna uppgifterna. Servern kunde inte godkänna formuläret.";
     const message = first(payload?.message, detail?.message, typeof detail === "string" ? detail : null);
-    return typeof message === "string" ? message.slice(0, 300) : "Åtgärden kunde inte genomföras. Försök igen eller kontrollera revisionsloggen.";
+    if (typeof message === "string") return (code ? code + ": " : "") + message.slice(0, 500);
+    if (status === 403) return "Servern tillåter inte den här åtgärden för ditt konto.";
+    return code ? String(code).slice(0, 200) : "Åtgärden kunde inte genomföras. Försök igen eller kontrollera revisionsloggen.";
   }
   async function api(path, options = {}) {
     const method = options.method || "GET";
@@ -119,7 +122,7 @@
     finally { setBusy(button, false); if (state.data) applyPermissions(); }
   }
   function showLogin() {
-    state.user = null; state.csrf = null; state.data = null;
+    state.user = null; state.csrf = null; state.data = null; state.v12 = null; state.crm = null; state.crmQuery = null;
     byId("app-shell").hidden = true;
     byId("login-screen").hidden = false;
     for (const form of document.querySelectorAll(".config-form")) { form.reset(); delete form.dataset.hydrated; delete form.dataset.dirty; }
@@ -178,7 +181,8 @@
       real_paying_customers: first(metrics.real_paying_customers, new Set(paid.map((payment) => payment.lead_id)).size)
     };
   }
-  function dataVersionReady() { return Boolean(state.data?.v11); }
+  function dataVersionReady() { return Boolean(state.data?.v11 || state.v12); }
+  function aiStatus() { return state.v12?.ai || state.data?.v11?.ai || {}; }
   function summaryRows(id, entries) {
     const target = byId(id);
     target.replaceChildren();
@@ -204,7 +208,7 @@
     text("legacy-lead-count", integer.format(first(m.unclassified_leads, legacyLeads)));
     text("demo-revenue", amount(first(m.simulated_revenue_minor, data.metrics?.simulated_revenue_minor, 0)));
     text("real-activity-note", "Verkliga kontaktförsök: " + integer.format(number(m.real_contact_attempts)) + " · Leverantörsgodkända utskick: " + integer.format(number(m.real_contacts_sent)) + " · Oskickade utkast: " + integer.format(number(m.pending_drafts)));
-    const ai = v.ai || {};
+    const ai = aiStatus();
     const aiConfig = ai.config || {};
     const aiPaid = ai.effective_paid_enabled === true;
     text("ai-state", aiPaid ? "Betalda anrop separat tillåtna" : "Betalda anrop spärrade");
@@ -213,8 +217,15 @@
       ["Modell", first(aiConfig.model, "Ej konfigurerad")],
       ["Servernyckel", ai.key_configured ? "Konfigurerad · dold" : "Ej konfigurerad"],
       ["Kostnadstak per anrop", amount(aiConfig.per_call_limit_sek_minor)],
+      ["Runtime-tillstånd", ai.readiness?.runtime === true ? "Tillåtet på servern · inget administratörsbeslut" : "Serverns kostnadsspärr gäller"],
+      ["Administratörsbeslut", ai.readiness?.administrator === true ? "Aktuellt godkännande registrerat" : "Separat godkännande saknas eller behöver förnyas"],
+      ["Modellrevision", first(ai.config_revision, aiConfig.revision, "Ej granskad")],
       ["Spårbarhet", ai.last_trace ? "Senaste anrop registrerat" : "Inga registrerade anrop"]
     ]);
+    byId("ai-blockers").replaceChildren(...list(ai.blockers).map((entry) => el("li", "", typeof entry === "string" ? entry : first(entry.message, entry.code, "Kontroll krävs"))));
+    let traceBox = byId("ai-last-trace");
+    if (!traceBox) { traceBox = el("div"); traceBox.id = "ai-last-trace"; byId("ai-summary").after(traceBox); }
+    traceBox.replaceChildren(ai.last_trace ? resultDetails("Senaste registrerade AI-anrop · status, token och kostnad", ai.last_trace) : el("p", "muted small", "Inga AI-anrop registrerade ännu."));
     hydrateConfig("ai-config-form", { "ai-model": first(aiConfig.model, "openai/gpt-4o-mini"), "ai-call-sek": number(first(aiConfig.per_call_limit_sek_minor, 200)) / 100, "ai-max-tokens": first(aiConfig.max_output_tokens, 512), "ai-timeout": first(aiConfig.timeout_seconds, 20), "ai-retries": first(aiConfig.max_retries, 1) });
     const pipeline = v.pipeline || {};
     text("pipeline-state", pipeline.requires_reauthorization ? "Kräver ny granskning" : pipeline.enabled ? "Förberedelser schemalagda" : "Schema avstängt");
@@ -254,19 +265,19 @@
     }
     const outreach = v.outreach || {};
     const checks = outreach.checks || {};
-    const contactEnabled = outreach.live_contact_authorized === true;
+    const contactEnabled = false;
     text("contact-gate-badge", contactEnabled ? "Separat kontaktgodkännande finns" : "Kundkontakt spärrad");
     byId("contact-gate-badge").className = "badge badge-" + (contactEnabled ? "warning" : "neutral");
-    text("outreach-state", contactEnabled ? "Separat godkännande registrerat" : "Kundkontakt spärrad");
+    text("outreach-state", "Spärrad i v1.2");
     summaryRows("outreach-summary", [
       ["Leverantör", first(outreach.provider, outreach.config?.provider, "Brevo · kräver granskning")],
       ["Domänunderlag", checks.reviewed_domain_evidence === true ? "Operatörsgranskat underlag registrerat" : "Operatörsgranskning krävs"],
       ["Avsändare & juridisk policy", checks.reviewed_sender_and_lawful_policy === true ? "Granskningsreferens registrerad" : "Ej godkänd"],
       ["Testomfattning", outreach.test_scope === "isolated_offline_safety_probe" ? "Isolerad offlinekontroll · inte leveranstest" : "Separat testunderlag krävs"],
-      ["Serverns kontaktspärr", outreach.runtime_contact_enabled === true ? "Runtime-tillstånd finns · övriga kontroller kvarstår" : "Avstängd"],
-      ["Manuellt livebeslut", outreach.approval_current === true ? "Aktuellt granskningsbeslut registrerat" : "Saknas eller behöver förnyas"]
+      ["Serverns kontaktspärr", "Permanent spärrad i v1.2"],
+      ["Betalningsåtgärder", "Permanent spärrade i v1.2 · historik bevaras"]
     ]);
-    text("preparation-status", contactEnabled ? "Separat kontaktgodkännande finns registrerat. Varje enskilt steg måste fortfarande passera kontaktpolicy, budget och nödstopp." : "Godkända källor, verkliga leads och utkast kan förberedas. Kundutskick och betalningar får ingen behörighet av dessa inställningar.");
+    text("preparation-status", "Godkända källor, verkliga leads och interna AI-utkast kan förberedas. Verkliga kundutskick och betalningar är spärrade i v1.2, även om äldre runtime-inställningar finns.");
     byId("preparation").classList.toggle("version-unavailable", !data.v11);
   }
 
@@ -415,7 +426,7 @@
     for (const payment of pending.slice(0, 4)) {
       const card = el("div", "approval-item");
       const detail = el("div");
-      detail.append(el("strong", "", "Godkänn betalningsbegäran"), el("p", "", first(payment.reference, payment.customer_name, payment.id.slice(0, 8)) + " · " + amount(payment.total_minor ?? payment.amount_minor) + " inkl. moms"));
+      detail.append(el("strong", "", payment.provider === "demo" ? "Godkänn simulerad betalningsbegäran" : "Historiskt betalningsbeslut · spärrat i v1.2"), el("p", "", first(payment.reference, payment.customer_name, payment.id.slice(0, 8)) + " · " + amount(payment.total_minor ?? payment.amount_minor) + " inkl. moms"));
       card.append(detail, paymentButton(payment, "approve"));
       box.append(card);
     }
@@ -428,6 +439,7 @@
     }
   }
   function paymentButton(payment, action) {
+    if (payment.provider !== "demo") return el("span", "muted small", "Betalningsåtgärder spärrade i v1.2");
     const options = { disabled: !isAdmin() || isKilled(), primary: action === "approve" };
     if (action === "approve") return actionButton("Godkänn", async (button) => {
       const label = amount(first(payment.total_minor, payment.amount_minor));
@@ -472,9 +484,10 @@
       const row = el("tr");
       const title = el("div");
       title.append(el("span", "cell-title", jobNames[job.kind] || job.kind || job.type || "Arbetsflöde"), el("span", "cell-subtitle", date(first(job.run_at, job.created_at))));
+      if (job.result || job.error_code) title.append(resultDetails("Jobbresultat och blockeringsorsak", { id: job.id, result: job.result, error_code: job.error_code, reason: job.reason }));
       const actions = el("div", "table-action-group");
       const status = asStatus(job);
-      if (["PAUSED", "FAILED", "UNCERTAIN"].includes(status)) {
+      if (["PAUSED", "FAILED"].includes(status)) {
         actions.append(actionButton("Granska / återuppta", async (button) => {
           if (!window.confirm("Granska jobbets senaste fel och behörigheter innan det återupptas. Fortsätt med ett uttryckligt återupptagningsbeslut?")) return;
           await mutate(button, "/api/jobs/" + encodeURIComponent(job.id) + "/resume", {}, "Jobbet har fått ett uttryckligt återupptagningsbeslut.");
@@ -483,13 +496,18 @@
         actions.append(actionButton("Pausa", async (button) => {
           await mutate(button, "/api/jobs/" + encodeURIComponent(job.id) + "/pause", {}, "Jobbet är pausat.");
         }, { disabled: !isAdmin() }));
-      } else actions.append(el("span", "muted small", first(job.error_code, job.reason, "—")));
+      } else actions.append(el("span", "muted small", status === "UNCERTAIN" ? "Avstämning krävs före nytt försök" : first(job.error_code, job.reason, "—")));
+      if (["internal_agent", "factory_generate", "factory_delivery"].includes(job.kind) && ["QUEUED", "PAUSED", "FAILED"].includes(status)) actions.append(actionButton("Avbryt internt jobb", async (button) => {
+        const reason = window.prompt("Varför ska detta interna jobb avbrytas?", "Avbrutet efter operatörsgranskning");
+        if (!reason || reason.trim().length < 12) return;
+        await mutate(button, "/api/internal/jobs/" + encodeURIComponent(job.id) + "/cancel", { reason: reason.trim() }, "Det interna jobbet är avbrutet.");
+      }, { disabled: !isAdmin() }));
       row.append(cell(title), cell(badge(status)), cell(number(job.attempts) + " / " + first(job.max_attempts, 3)), cell(actions));
       body.append(row);
     }
     text("jobs-count", jobs.length + " registrerade jobb");
     byId("jobs-empty").hidden = jobs.length > 0;
-    const resolved = (task) => ["DONE", "COMPLETED", "RESOLVED", "SUPERSEDED"].includes(asStatus(task));
+    const resolved = (task) => ["DONE", "COMPLETED", "RESOLVED", "SUPERSEDED", "TEST_ARTIFACT"].includes(asStatus(task));
     const filter = byId("tasks-filter").value;
     const tasks = list(data.tasks).filter((task) => filter === "all" || (filter === "resolved" ? resolved(task) : !resolved(task)));
     const taskBox = byId("tasks-list");
@@ -580,7 +598,7 @@
     const connectionBox = byId("connections-list");
     connectionBox.replaceChildren();
     const connections = data.connections || {};
-    const connectionRows = [["Databas", first(connections.database, "Beständig databas")], ["Jobbkö", first(connections.queue, "Databasbaserad")], ["AI-leverantör", demo ? "Simulerad i demo" : first(connections.llm, connections.openrouter, connections.OPENROUTER_API_KEY, "Status saknas")], ["E-post", demo ? "Simulerad i demo" : first(connections.email, connections.BREVO_API_KEY, "Status saknas")], ["Betalningar", demo ? "Simulerade i demo" : first(connections.payments, connections.stripe, connections.STRIPE_SECRET_KEY, "Status saknas")], ["Din behörighet", roleNames[state.user?.role] || state.user?.role || "—"]];
+    const connectionRows = [["Databas", first(connections.database, "Beständig databas")], ["Jobbkö", first(connections.queue, "Databasbaserad")], ["AI-leverantör", aiStatus().effective_paid_enabled ? "OpenRouter · separat godkända betalda interna anrop" : "Betalda interna anrop spärrade · se AI-kontroller"], ["E-post", "Verkliga utskick spärrade i v1.2"], ["Betalningar", "Verkliga betalningsåtgärder spärrade i v1.2"], ["Din behörighet", roleNames[state.user?.role] || state.user?.role || "—"]];
     for (const [label, value] of connectionRows) {
       const safeValue = typeof value === "boolean" ? value ? "Konfigurerad" : "Ej konfigurerad" : typeof value === "object" ? first(value.status, value.mode, value.configured ? "Konfigurerad" : "Ej konfigurerad") : value;
       connectionBox.append(el("dt", "", label), el("dd", "", safeValue));
@@ -598,24 +616,232 @@
     }
     byId("audit-empty").hidden = audits.length > 0;
   }
+  const serviceNames = { market_analysis: "Marknadsanalys", seo_analysis: "SEO-analys", content_calendar: "Innehållskalender", marketing_strategy: "Marknadsföringsstrategi", prospecting_report: "Prospekteringsrapport" };
+  const agentNames = { ceo: "CEO", lead_research: "Research", research: "Research", sales: "Sales", delivery: "Delivery", finance: "Finance", compliance: "Compliance" };
+  function ids(value) { return [...new Set(String(value).split(",").map((entry) => entry.trim()).filter(Boolean))]; }
+  function outputText(value) {
+    if (value === undefined || value === null) return "Inget resultat registrerat.";
+    return typeof value === "object" ? JSON.stringify(value, null, 2) : String(value);
+  }
+  function resultDetails(label, value, open = false) {
+    const details = el("details", "output-details"); details.open = open;
+    details.append(el("summary", "", label), el("pre", "output-text", outputText(value)));
+    return details;
+  }
+  function chart(id, points, field, label, monetary = false) {
+    const target = byId(id); target.replaceChildren();
+    if (!points.length) { target.append(el("p", "empty-state", "Ingen registrerad tidsserie ännu. Ingen aktivitet uppskattas eller simuleras.")); return; }
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 560 180"); svg.setAttribute("role", "img"); svg.setAttribute("aria-label", label);
+    const title = document.createElementNS(ns, "title"); title.textContent = label; svg.append(title);
+    const values = points.map((point) => number(field(point)));
+    const max = Math.max(1, ...values);
+    const baseline = document.createElementNS(ns, "path"); baseline.setAttribute("d", "M38 145H550"); baseline.setAttribute("class", "chart-axis"); svg.append(baseline);
+    const gap = Math.min(18, 230 / points.length), width = (500 - gap * points.length) / points.length;
+    points.forEach((point, index) => {
+      const rect = document.createElementNS(ns, "rect");
+      const height = values[index] / max * 112;
+      rect.setAttribute("x", String(43 + index * (width + gap))); rect.setAttribute("y", String(145 - height)); rect.setAttribute("width", String(Math.max(1, width))); rect.setAttribute("height", String(height)); rect.setAttribute("rx", "3"); rect.setAttribute("class", "chart-bar");
+      const hint = document.createElementNS(ns, "title"); hint.textContent = first(point.day, point.date, "Dag " + (index + 1)) + ": " + (monetary ? amount(values[index]) : integer.format(values[index])); rect.append(hint); svg.append(rect);
+    });
+    for (const [x, y, value, anchor] of [[38, 22, monetary ? amount(max) : integer.format(max), "start"], [38, 167, first(points[0].day, points[0].date, "Första dagen"), "start"], [550, 167, first(points.at(-1).day, points.at(-1).date, "Senaste dagen"), "end"]]) {
+      const node = document.createElementNS(ns, "text"); node.setAttribute("x", x); node.setAttribute("y", y); node.setAttribute("text-anchor", anchor); node.setAttribute("class", "chart-label"); node.textContent = value; svg.append(node);
+    }
+    target.append(svg, el("p", "footnote", "Totalt i visad period: " + (monetary ? amount(values.reduce((sum, n) => sum + n, 0)) : integer.format(values.reduce((sum, n) => sum + n, 0)))));
+  }
+  function renderEngine() {
+    const v = state.v12;
+    for (const section of document.querySelectorAll(".v12-section")) section.classList.toggle("version-unavailable", !v);
+    text("engine-status", v ? "Databasregistrerad aktivitet" : "v1.2-API saknas");
+    if (!v) return;
+    const metrics = v.metrics || {}, totals = metrics.totals || metrics;
+    const metricsBox = byId("engine-metrics"); metricsBox.replaceChildren();
+    const items = [
+      ["Bokförda AI-anrop", first(totals.ai_calls, totals.total_ai_calls), false],
+      ["Indata / utdata, token", integer.format(number(totals.input_tokens)) + " / " + integer.format(number(totals.output_tokens)), "text"],
+      ["AI-kostnad idag", first(totals.ai_cost_daily_minor, totals.ai_cost_today_minor), true],
+      ["AI-kostnad, månad", first(totals.ai_cost_monthly_minor, totals.ai_cost_month_minor), true],
+      ["Aktiva jobb", first(totals.active_jobs, list(state.data.jobs).filter((job) => ["QUEUED", "LEASED", "RUNNING"].includes(asStatus(job))).length), false],
+      ["Slutförda jobb", first(totals.completed_jobs, list(state.data.jobs).filter((job) => ["COMPLETED", "DONE"].includes(asStatus(job))).length), false],
+      ["Registrerade leverabler", first(totals.service_outputs, totals.deliverables, list(v.services?.results).length), false],
+      ["Registrerad total kostnad", first(totals.actual_cost_minor, state.data.budget?.actual_sek_minor), true],
+      ["Verifierade leads", totals.verified_leads, false], ["Källgranskningar", totals.research_reports, false],
+      ["Interna offertutkast", totals.offers, false], ["Väntande granskningar", totals.pending_approvals, false],
+      ["Verifierad verklig intäkt", totals.verified_revenue_minor, true], ["Verkligt nettoutfall", totals.net_outcome_minor, true],
+      ["Återstående budget", totals.budget_remaining_minor, true], ["Reserverad kostnad", totals.reserved_cost_minor, true]
+    ];
+    for (const [label, value, type] of items) { const card = el("article", "small-stat"); card.append(el("span", "", label), el("strong", "", value === undefined ? "—" : type === "text" ? value : type ? amount(value) : integer.format(number(value)))); metricsBox.append(card); }
+    const series = list(first(metrics.daily, metrics.series, metrics.daily_series));
+    chart("activity-chart", series, (point) => first(point.ai_calls, point.calls, 0), "Registrerade AI-anrop per dag");
+    chart("cost-chart", series, (point) => first(point.ai_cost_minor, point.cost_minor, 0), "Registrerad AI-kostnad i SEK per dag", true);
+    const schedules = byId("engine-schedules"); schedules.replaceChildren();
+    const scheduleItems = list(v.schedules?.items || v.schedules);
+    if (!scheduleItems.length) schedules.append(el("p", "empty-state", "Inga interna scheman är registrerade. Förberedelseschemat kan granskas under AI & schemaläggning."));
+    for (const schedule of scheduleItems) { const row = el("div", "source-item"); row.append(el("strong", "", first(schedule.name, schedule.kind, schedule.id)), el("p", "muted small", (schedule.enabled ? "Aktivt internt schema" : "Avstängt") + " · nästa körning " + date(first(schedule.next_run_at, schedule.next_at))), el("p", "muted small", first(schedule.blocker, schedule.last_error, "Extern kontakt och betalningar spärrade"))); schedules.append(row); }
+    renderCRM(state.crm || v.crm || { items: [] }); renderFactory(v.services || {}); renderSalesOffers(v.services?.offers || []); renderAgents(v.agents || {}); renderReports(v.reports || {});
+  }
+  function renderCRM(data) {
+    const target = byId("crm-results"); target.replaceChildren(); const leads = list(data.items || data.leads || data);
+    text("crm-count", first(data.total, leads.length));
+    const mode = byId("crm-mode").value;
+    const shown = state.crm ? leads : leads.filter((lead) => !mode || recordMode(lead) === mode);
+    if (!shown.length) target.append(el("p", "empty-state", "Inga leads matchar urvalet. Lägg först till verifierat underlag från en godkänd källa."));
+    for (const lead of shown) {
+      const card = el("article", "crm-card"); const header = el("div", "task-heading");
+      header.append(el("h3", "", company(lead)), badge(recordMode(lead) === "REAL" ? "APPROVED" : "PENDING", modeLabel(lead)));
+      card.append(header, el("p", "muted small", [lead.industry, lead.geography, lead.website || lead.domain].filter(Boolean).join(" · ") || "Bransch, geografi eller webbplats saknar verifierat källunderlag."));
+      const assessment = first(lead.crm, lead.assessment, lead.crm_assessment, lead.latest_assessment, {});
+      card.append(el("p", "small", "Bedömning: " + first(assessment.score, lead.ai_score, lead.score, lead.quality_score, "Ej bedömd") + " · " + first(assessment.reason, lead.need, lead.description, "Ingen källbelagd behovsanalys ännu.")));
+      card.append(el("p", "muted small", "Källunderlag: " + (lead.source_verified === true ? "aktuell tillåten källa verifierad" : "kräver granskning") + " · registreringsbevis hos myndighet: ej verifierat"));
+      if (assessment.next_action || lead.suggested_service) card.append(el("p", "small", "Nästa interna steg: " + first(assessment.next_action, "granska rekommendationen") + " · " + first(assessment.suggested_service, lead.suggested_service, "tjänst ej bedömd")));
+      if (first(assessment.estimated_business_value_minor, lead.estimated_business_value_minor) !== undefined) card.append(el("p", "muted small", "Uppskattat affärsvärde: " + amount(first(assessment.estimated_business_value_minor, lead.estimated_business_value_minor)) + " · prognos, ingen intäkt"));
+      if (list(lead.citations).length) card.append(resultDetails("Källhänvisningar (" + lead.citations.length + ")", lead.citations));
+      if (Object.keys(assessment).length) card.append(resultDetails("Kvalificering och rekommendation", assessment));
+      const actions = el("div", "button-row");
+      actions.append(actionButton("Visa lead", () => showLead(lead)));
+      for (const [label, suffix, message] of [["AI-kvalificera", "score", "Kvalificeringen har köats. Resultatet visas efter slutfört jobb."], ["Förbered offertutkast", "offer", "Ett internt offertjobb har köats. Inget har skickats."]]) actions.append(actionButton(label, async (button) => { state.crm = null; const result = await mutate(button, "/api/crm/leads/" + encodeURIComponent(lead.id) + "/" + suffix, { idempotency_key: key("crm-" + suffix) }, message); if (result) { showLead(lead); byId("lead-details").append(el("dt", "", "Registrerat internt jobb"), el("dd", "", outputText(result))); await loadCRM(); } }, { disabled: !canOperate() || isKilled() }));
+      card.append(actions); target.append(card);
+    }
+  }
+  function renderFactory(data) {
+    const orders = list(data.orders || data.items), results = list(data.results);
+    text("factory-count", orders.length); const target = byId("factory-orders"); target.replaceChildren();
+    if (!orders.length) target.append(el("p", "empty-state", "Inga beställningar ännu. En beställning skapar ingen extern leverans."));
+    for (const order of orders) {
+      const card = el("article", "panel factory-order"); const header = el("div", "panel-heading");
+      header.append(el("h3", "", serviceNames[first(order.type, order.service_type, order.kind)] || first(order.type, "Digital leverabel")), badge(asStatus(order))); card.append(header, el("p", "", order.brief), el("p", "muted small", order.id + " · " + date(order.created_at)));
+      if (order.blocker || order.blocked_reason || order.error_code) card.append(el("p", "inline-feedback", first(order.blocker, order.blocked_reason, order.error_code)));
+      const orderResults = results.filter((result) => result.order_id === order.id).concat(list(order.results));
+      const actions = el("div", "button-row");
+      if (!["COMPLETED", "CANCELLED", "REJECTED", "UNCERTAIN", "GENERATING"].includes(asStatus(order))) actions.append(actionButton("Köa generering", async (button) => { const result = await mutate(button, "/api/factory/orders/" + encodeURIComponent(order.id) + "/generate", { idempotency_key: key("factory-generate") }, "Genereringen har köats. Resultatet visas efter att det interna jobbet har slutförts."); if (result) text("factory-feedback", "Generering registrerad för " + order.id + ". Se jobbkö och resultat."); }, { disabled: !canOperate() || isKilled() }));
+      if (asStatus(order) === "UNCERTAIN") card.append(el("p", "inline-feedback", "Osäkert leverantörsutfall kräver avstämning. Ingen ny generering startas från denna vy."));
+      card.append(actions);
+      for (const result of orderResults) {
+        const block = el("div", "factory-result"); block.append(badge(asStatus(result)), resultDetails("Resultat · innehåll, källor och spårning", first(result.document, result.content, result.output, result), true));
+        const resultActions = el("div", "button-row");
+        for (const format of ["markdown", "json"]) { const link = el("a", "button button-small button-secondary", "Exportera " + (format === "markdown" ? "Markdown" : "JSON")); link.href = "/api/factory/results/" + encodeURIComponent(result.id) + "/export?format=" + format; link.setAttribute("download", ""); resultActions.append(link); }
+        if (!["APPROVED", "REJECTED"].includes(asStatus(result))) for (const [label, decision] of [["Godkänn internt resultat", "approve"], ["Begär omarbetning", "reject"]]) resultActions.append(actionButton(label, async (button) => { const reason = window.prompt("Beskriv granskningen av källor, kvalitet och osäkerheter. Ingen kundkontakt godkänns.", ""); if (!reason || reason.trim().length < 12) return; await mutate(button, "/api/factory/results/" + encodeURIComponent(result.id) + "/review", { decision, reason: reason.trim() }, "Resultatgranskningen är registrerad."); }, { disabled: !isAdmin() }));
+        block.append(resultActions); card.append(block);
+      }
+      target.append(card);
+    }
+    const types = byId("factory-types"); types.replaceChildren();
+    for (const [id, name] of Object.entries(serviceNames)) types.append(el("p", "muted small", name + " · " + id));
+  }
+  function renderSalesOffers(offers) {
+    let panel = byId("sales-offers");
+    if (!panel) { panel = el("article", "panel agent-history"); panel.id = "sales-offers"; byId("crm").append(panel); }
+    panel.replaceChildren(el("h3", "", "Interna offertutkast · inga utskick"));
+    if (!list(offers).length) panel.append(el("p", "empty-state", "Inga verkliga AI-offertutkast har skapats. Ett köat jobb räknas inte som ett färdigt utkast."));
+    for (const offer of list(offers)) {
+      const content = offer.content || {}, row = el("div", "mission-item"), header = el("div", "task-heading");
+      const lead = list(state.data?.leads).find((entry) => entry.id === offer.lead_id);
+      header.append(el("strong", "", first(content.package_name, lead ? company(lead) : null, offer.id)), badge(asStatus(offer)));
+      row.append(header, el("p", "muted small", "Lead " + offer.lead_id + " · spårning " + first(offer.trace_id, "saknas")), el("p", "small", first(content.fit_reason, "Inget giltigt AI-utkast registrerat.")));
+      if (content.email_subject || content.email_body) row.append(resultDetails("Personligt meddelande · oskickat utkast", { subject: content.email_subject, body: content.email_body, follow_up_plan: content.follow_up_plan }, true));
+      row.append(resultDetails("Offertpris, källor och granskningsunderlag", { price: offer.price, citations: offer.citations, administrator_approval: offer.administrator_approval, service_registry_approved: offer.service_registry_approved, note: offer.note }));
+      if (["DRAFT", "REVIEW_REQUIRED"].includes(asStatus(offer)) && !offer.administrator_approval) { const actions = el("div", "button-row"); for (const [label, decision] of [["Godkänn internt offertutkast", "approve"], ["Avvisa offertutkast", "reject"]]) actions.append(actionButton(label, async (button) => { const reason = window.prompt("Granska tjänst, pris, källor och det oskickade meddelandet. Beslutet får inte tillåta kundkontakt eller betalning.", ""); if (!reason || reason.trim().length < 12) return; await mutate(button, "/api/crm/offers/" + encodeURIComponent(offer.id) + "/review", { decision, reason: reason.trim() }, "Det interna offertutkastet är granskat. Inget har skickats."); }, { disabled: !isAdmin() })); row.append(actions); }
+      panel.append(row);
+    }
+  }
+  function renderReports(reports) {
+    let panel = byId("agent-reports");
+    if (!panel) { panel = el("article", "panel agent-history"); panel.id = "agent-reports"; byId("agent-center").append(panel); }
+    panel.replaceChildren(el("h3", "", "Faktiska planer och agentrapporter"));
+    let count = 0;
+    for (const [name, label] of [["plans", "CEO-plan"], ["research", "Källbelagd research"], ["compliance", "Policygranskning"], ["finance", "Ekonomisk granskning"], ["daily", "Verksamhetsrapport"]]) for (const report of list(reports[name])) { panel.append(resultDetails(label + " · " + first(report.id, report.mission_id, "registrerad") + " · " + date(report.created_at), report)); count++; }
+    if (!count) panel.append(el("p", "empty-state", "Inga rapporter har registrerats. Blockerat arbete ger inga påhittade rapporter."));
+    let research = byId("crm-research-reports");
+    if (!research) { research = el("article", "panel agent-history"); research.id = "crm-research-reports"; byId("crm").append(research); }
+    research.replaceChildren(el("h3", "", "Researchresultat med källor"));
+    for (const report of list(reports.research)) research.append(resultDetails("Researchrapport " + report.id + " · " + date(report.created_at), report));
+    if (!list(reports.research).length) research.append(el("p", "empty-state", "Ingen slutförd researchrapport ännu. Importerat underlag och AI-analyser redovisas var för sig."));
+  }
+  function renderAgents(data) {
+    const roles = list(data.roles), missions = list(data.missions), tasks = list(data.tasks);
+    const target = byId("agent-role-cards");
+    const preserveRoleForms = target.contains(document.activeElement) || target.querySelector("form[data-dirty]");
+    if (!preserveRoleForms) {
+    const expandedRoles = new Set([...target.querySelectorAll("details.admin-settings[open] form")].map((form) => form.dataset.role));
+    target.replaceChildren();
+    if (!roles.length) target.append(el("p", "empty-state", "Inga agentstatusar tillgängliga. Ingen pågående aktivitet antas."));
+    for (const role of roles) {
+      const roleId = first(role.role, role.id, role.name); const card = el("article", "panel agent-role-card");
+      const actuallyRunning = list(state.v12?.jobs || state.data?.jobs).some((job) => job.kind === "internal_agent" && job.payload?.role === roleId && ["LEASED", "RUNNING"].includes(asStatus(job)));
+      const roleState = first(role.status, role.state, actuallyRunning ? "BUSY" : role.enabled === false || ["BLOCKED", "UNCERTAIN", "FAILED"].includes(asStatus(role.last_task || { status: "IDLE" })) ? "BLOCKED" : "IDLE");
+      const header = el("div", "panel-heading"); header.append(el("h3", "", agentNames[roleId] || roleId), badge(roleState)); card.append(header);
+      card.append(el("p", "muted small", first(role.description, role.purpose, "Intern agentroll med serverkontrollerade befogenheter.")), el("p", "small", "Uppgifter: " + number(role.tasks) + " · slutförda " + number(role.completed) + " · blockerade " + number(role.blocked)), el("p", "small", "Senast registrerat: " + first(role.last_action, role.last_event, role.last_task?.error_code, role.last_task ? statusLabel(asStatus(role.last_task)) + " · " + date(first(role.last_task.updated_at, role.last_task.created_at)) : "Ingen registrerad åtgärd")));
+      if (role.blocker || role.blocked_reason) card.append(el("p", "inline-feedback", first(role.blocker, role.blocked_reason)));
+      card.append(resultDetails("Rollens granskade konfiguration och tillåtna verktyg", role.config || { enabled: role.enabled, priority: role.priority, per_call_limit_minor: role.per_call_limit_minor, daily_budget_minor: role.daily_budget_minor, max_calls_per_day: role.max_calls_per_day, tools: role.tools, allowlisted_tools: role.allowlisted_tools }));
+      const settings = el("details", "admin-settings"); settings.open = expandedRoles.has(roleId); settings.append(el("summary", "", "Konfigurera intern roll")); const form = el("form", "config-form agent-config-form");
+      form.dataset.role = roleId;
+      for (const [name, label, minimum, maximum, fallback] of [["priority", "Prioritet · lägre tal först", 0, 100, 50], ["per_call_limit_minor", "Kostnadstak per anrop, öre", 1, 50000, 200], ["daily_budget_minor", "Dygnsbudget, öre", 0, 50000, 10000], ["max_calls_per_day", "Högst AI-anrop per dygn", 1, 100, 30]]) { const caption = el("label", "", label); const input = el("input"); input.name = name; input.type = "number"; input.min = minimum; input.max = maximum; input.required = true; input.value = first(role.config?.[name], role[name], fallback); input.disabled = !isAdmin(); form.append(caption, input); }
+      const reasonLabel = el("label", "", "Granskningsanteckning"); const reason = el("input"); reason.name = "reason"; reason.minLength = 12; reason.maxLength = 500; reason.required = true;
+      form.append(el("p", "footnote", "Tillåtna interna verktyg · endast serverns rollspecifika lista"));
+      for (const tool of list(role.allowlisted_tools)) { const caption = el("label", "checkbox-label"); const input = el("input"); input.type = "checkbox"; input.name = "tools"; input.value = tool; input.checked = list(role.config?.tools || role.tools).includes(tool); input.disabled = !isAdmin(); caption.append(input, document.createTextNode(tool)); form.append(caption); }
+      const enabledLabel = el("label", "checkbox-label"); const enabled = el("input"); enabled.type = "checkbox"; enabled.name = "enabled"; enabled.checked = first(role.config?.enabled, role.enabled, true); enabledLabel.append(enabled, document.createTextNode("Tillåt interna uppgifter för rollen"));
+      const button = el("button", "button button-secondary", "Spara rollinställning"); button.type = "submit"; for (const node of [reason, enabled, button]) node.disabled = !isAdmin();
+      form.append(enabledLabel, reasonLabel, reason, button); form.addEventListener("input", () => { form.dataset.dirty = "true"; }); settings.append(form); card.append(settings); target.append(card);
+    }
+    }
+    const missionBox = byId("missions-list"); missionBox.replaceChildren(); text("missions-count", missions.length + " uppdrag");
+    if (!missions.length) missionBox.append(el("p", "empty-state", "Inga uppdrag ännu. Skapa ett avgränsat internt uppdrag i Business Engine."));
+    for (const mission of missions) {
+      const row = el("div", "mission-item"); const header = el("div", "task-heading"); const status = asStatus(mission);
+      header.append(el("strong", "", first(mission.goal, mission.id)), badge(status)); row.append(header, el("p", "muted small", mission.id + " · " + date(mission.created_at)));
+      if (mission.blocker || mission.error_code || mission.reason) row.append(el("p", "inline-feedback", first(mission.blocker, mission.error_code, mission.reason)));
+      if (mission.result || mission.output || mission.summary) row.append(resultDetails("Uppdragsresultat", first(mission.result, mission.output, mission.summary)));
+      const actions = el("div", "button-row");
+      const action = ["PAUSED", "BLOCKED", "FAILED"].includes(status) ? "resume" : ["QUEUED", "RUNNING", "ACTIVE"].includes(status) ? "pause" : null;
+      if (action) actions.append(actionButton(action === "resume" ? "Granska och återuppta uppdrag" : "Pausa hela uppdraget", async (button) => { const reason = window.prompt(action === "resume" ? "Beskriv granskningen av källor, kostnader och blockeringsorsak. Osäkra leverantörsanrop kräver separat avstämning." : "Ange varför uppdraget och dess väntande agentjobb ska pausas.", ""); if (!reason || reason.trim().length < 12) return; await mutate(button, "/api/missions/" + encodeURIComponent(mission.id) + "/" + action, { reason: reason.trim() }, action === "resume" ? "Återupptagningsbeslutet är registrerat. Servern kontrollerar alla kvarvarande spärrar." : "Hela uppdraget är pausat."); }, { disabled: !isAdmin() || (action === "resume" && isKilled()) }));
+      if (status === "UNCERTAIN") row.append(el("p", "inline-feedback", "Osäkert leverantörsutfall: avstämning krävs före återupptagning. Inga AI-anrop upprepas automatiskt."));
+      row.append(actions); missionBox.append(row);
+    }
+    const taskBox = byId("agent-tasks-list"); taskBox.replaceChildren(); text("agent-tasks-count", tasks.length + " registrerade uppgifter");
+    if (!tasks.length) taskBox.append(el("p", "empty-state", "Inga agentuppgifter har körts."));
+    for (const task of tasks.slice(0, 60)) { const row = el("div", "mission-item"); const header = el("div", "task-heading"); header.append(el("strong", "", (agentNames[task.role] || task.role || "Agent") + " · " + first(task.kind, task.title, task.id)), badge(asStatus(task))); row.append(header, el("p", "muted small", "Uppdrag " + first(task.mission_id, "—") + " · " + date(first(task.updated_at, task.created_at)))); if (task.blocker || task.error_code || task.reason) row.append(el("p", "inline-feedback", first(task.blocker, task.error_code, task.reason))); if (task.output || task.result) row.append(resultDetails("Verifierbart uppgiftsresultat", first(task.output, task.result))); taskBox.append(row); }
+    const proposals = byId("agent-proposals"); proposals.replaceChildren();
+    for (const proposal of list(data.proposals)) {
+      const row = el("div", "mission-item"); row.append(el("strong", "", first(proposal.title, proposal.kind, proposal.id)), badge(asStatus(proposal)), resultDetails("Förslagets underlag", proposal));
+      if (["PENDING", "DRAFT", "REVIEW_REQUIRED", "PROPOSED"].includes(asStatus(proposal))) { const actions = el("div", "button-row"); for (const [label, decision] of [["Granska internt förslag", "approve"], ["Avvisa förslag", "reject"]]) actions.append(actionButton(label, async (button) => { const reason = window.prompt("Beskriv granskningen. Detta får inte ge tillstånd till kundkontakt eller betalningar.", ""); if (!reason || reason.trim().length < 12) return; await mutate(button, "/api/agents/actions/" + encodeURIComponent(proposal.id) + "/review", { decision, reason: reason.trim() }, "Granskningen av det interna förslaget är registrerad."); }, { disabled: !isAdmin() })); row.append(actions); }
+      proposals.append(row);
+    }
+    if (!list(data.proposals).length) proposals.append(el("p", "empty-state", "Inga föreslagna åtgärder väntar."));
+  }
   function applyPermissions() {
-    byId("demo-button").disabled = !canOperate() || isKilled() || !isDemo();
-    byId("run-job-button").disabled = !canOperate() || isKilled();
-    byId("add-lead-button").disabled = !canOperate();
-    byId("kill-switch-button").disabled = !isAdmin();
+    const disable = (id, blocked) => { const button = byId(id); button.disabled = blocked || button.getAttribute("aria-busy") === "true"; };
+    disable("demo-button", !canOperate() || isKilled() || !isDemo());
+    disable("run-job-button", !canOperate() || isKilled());
+    disable("add-lead-button", !canOperate());
+    disable("kill-switch-button", !isAdmin());
     for (const fieldset of document.querySelectorAll("[data-admin-only]")) fieldset.disabled = !isAdmin() || !dataVersionReady();
-    byId("import-lead-save").disabled = !isAdmin() || !dataVersionReady();
+    disable("import-lead-save", !isAdmin() || !dataVersionReady());
+    for (const fieldset of document.querySelectorAll("[data-operator-only]")) fieldset.disabled = !canOperate() || !state.v12 || isKilled();
+    disable("ai-test-button", !isAdmin() || !state.v12 || isKilled());
+    disable("ai-activate", !isAdmin() || !state.v12 || isKilled() || !aiStatus().config?.revision);
+    disable("ai-deactivate", !isAdmin() || !state.v12 || !aiStatus().config?.revision);
+    disable("ai-model-refresh", !isAdmin() || !state.v12 || isKilled());
   }
   function render(data) {
     state.data = data;
-    renderMetrics(data); renderBudget(data); renderLeads(data); renderApprovals(data); renderPayments(data); renderJobs(data); renderSecurity(data); renderPreparation(data); applyPermissions();
+    state.v12 = data.v12 || state.v12;
+    renderMetrics(data); renderBudget(data); renderLeads(data); renderApprovals(data); renderPayments(data); renderJobs(data); renderSecurity(data); renderPreparation(data); renderEngine(); applyPermissions();
     text("last-updated", "Uppdaterad " + new Intl.DateTimeFormat("sv-SE", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date()));
   }
   async function refresh() {
     if (!state.user || state.refreshing) return;
     state.refreshing = true;
     byId("refresh-button").setAttribute("aria-busy", "true");
-    try { render(await api("/api/dashboard")); }
+    try {
+      const data = await api("/api/dashboard");
+      if (!data.v12) {
+        try { state.v12 = await api("/api/v1.2/overview"); }
+        catch (error) { if (!state.user) throw error; state.v12 = null; }
+      }
+      if (state.crmQuery) state.crm = await api("/api/crm/leads?" + state.crmQuery);
+      if (state.user) render(data);
+    }
     catch (error) { if (state.user) showError(error.message); }
     finally { state.refreshing = false; byId("refresh-button").removeAttribute("aria-busy"); }
   }
@@ -641,7 +867,10 @@
   byId("refresh-button").addEventListener("click", refresh);
   byId("dismiss-error").addEventListener("click", () => { byId("global-error").hidden = true; });
   byId("demo-button").addEventListener("click", async () => { await mutate(byId("demo-button"), "/api/demo/run", { idempotency_key: key("demo") }, "Demoresan är registrerad. Den stannar för ditt betalningsgodkännande."); });
-  byId("run-job-button").addEventListener("click", async () => { await mutate(byId("run-job-button"), "/api/jobs/run", {}, "Jobbkön har behandlats. Se aktuell status nedan."); });
+  byId("run-job-button").addEventListener("click", async () => {
+    const result = await mutate(byId("run-job-button"), "/api/jobs/run", {}, "Jobbkön har kontrollerats.");
+    if (result) text("job-feedback", result.job === null ? "Inget körbart jobb finns just nu. Kön kan vara tom, vänta på schemat eller ha blockerade uppgifter." : "Servern behandlade " + first(result.job?.kind, result.kind, "ett jobb") + " · " + statusLabel(asStatus(result.job || result)) + ". Se uppdrag och körhistorik.");
+  });
   byId("kill-switch-button").addEventListener("click", async () => {
     const enabled = !isKilled();
     const question = enabled ? "Aktivera globalt nödstopp? Nya kostnadsdrivande och externa åtgärder stoppas. Befintliga data bevaras." : "Häva nödstoppet? Pausade jobb återupptas inte automatiskt och live-läge aktiveras inte.";
@@ -681,10 +910,10 @@
   byId("ai-config-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!isAdmin() || !dataVersionReady()) return;
-    const existing = state.data.v11.ai?.config || {};
+    const existing = aiStatus().config || {};
     const model = byId("ai-model").value.trim();
     await saveConfig("ai-config-form", "ai-config-save", "/api/ai/config", {
-      model, approved_models: [model], enabled: false,
+      model, approved_models: [model], enabled: existing.enabled === true,
       max_output_tokens: Number(byId("ai-max-tokens").value),
       max_input_chars: first(existing.max_input_chars, 12000),
       timeout_seconds: Number(byId("ai-timeout").value), max_retries: Number(byId("ai-retries").value),
@@ -693,8 +922,74 @@
       prompt_usd_per_million: String(first(existing.prompt_usd_per_million, "1.00")),
       completion_usd_per_million: String(first(existing.completion_usd_per_million, "5.00")),
       reason: byId("ai-reason").value.trim()
-    }, "Modellinställningar sparade. Betalda anrop förblir avstängda.");
+    }, "Modellinställningar sparade. Serverns aktuella AI-spärrar och eventuella krav på förnyat godkännande visas ovan.");
   });
+  byId("ai-activation-form").addEventListener("submit", async (event) => {
+    event.preventDefault(); if (!isAdmin()) return;
+    if (!window.confirm("Godkänn betalda interna AI-anrop för den aktuella modellrevisionen inom budgetmandatet? Detta kan medföra verklig AI-kostnad. Kundkontakt och betalningar förblir spärrade.")) return;
+    const result = await saveConfig("ai-activation-form", "ai-activate", "/api/ai/activation", { statement: byId("ai-activation-statement").value.trim(), config_revision: aiStatus().config?.revision, reason: byId("ai-activation-reason").value.trim() }, "Det separata AI-beslutet är registrerat. Alla övriga serverkontroller gäller fortfarande.");
+    if (result) byId("ai-activation-form").reset();
+  });
+  byId("ai-deactivate").addEventListener("click", async () => {
+    const reason = window.prompt("Ange varför betalda interna AI-anrop ska spärras.", "Administratören spärrade betalda interna AI-anrop");
+    if (!reason || reason.trim().length < 12) return;
+    await mutate(byId("ai-deactivate"), "/api/ai/activation", { statement: "DISABLE PAID AI CALLS", config_revision: aiStatus().config?.revision, reason: reason.trim() }, "Betalda interna AI-anrop är spärrade.");
+  });
+  byId("ai-model-refresh").addEventListener("click", async () => { await mutate(byId("ai-model-refresh"), "/api/ai/models/refresh", {}, "Modellmetadata har kontrollerats. Granska kompatibilitet och prisgränser."); });
+  byId("fx-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const observed = new Date(byId("fx-observed").value).getTime();
+    if (!Number.isFinite(observed)) { toast("Ange en giltig observationstid.", true); return; }
+    await saveConfig("fx-form", "fx-submit", "/api/budget/fx", { currency: "USD", sek_per_unit: byId("fx-rate").value, source: byId("fx-source").value.trim(), observed_at: Math.floor(observed / 1000) }, "Den granskade USD/SEK-kursen är registrerad.");
+  });
+  byId("ai-test-form").addEventListener("submit", async (event) => {
+    event.preventDefault(); const button = byId("ai-test-button"), output = byId("ai-test-result");
+    setBusy(button, true, "Väntar på verkligt serverresultat…");
+    output.replaceChildren(el("p", "muted small", "Anropet behandlas av servern. Endast ett verifierat leverantörsresultat kan markeras som lyckat."));
+    try { const result = await api("/api/ai/test", { method: "POST", body: { idempotency_key: key("ai-diagnostic"), text: byId("ai-test-text").value.trim() } }); output.replaceChildren(resultDetails("Faktiskt AI-resultat · status, svar, token, kostnad och spårning", result, true)); await refresh(); }
+    catch (error) { output.replaceChildren(el("p", "form-error", error.message)); await refresh(); }
+    finally { setBusy(button, false); applyPermissions(); }
+  });
+  byId("mission-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const result = await mutate(byId("mission-submit"), "/api/missions", { idempotency_key: key("mission"), goal: byId("mission-goal").value.trim(), source_ids: ids(byId("mission-sources").value), lead_ids: ids(byId("mission-leads").value), deliverable_kind: byId("mission-type").value, max_cost_minor: Math.round(Number(byId("mission-cost").value) * 100), priority: byId("mission-priority").value }, "Det interna uppdraget är registrerat. Agenternas steg och eventuella blockeringar visas i kontrollcentret.");
+    text("mission-feedback", result ? "Registrerat uppdrag: " + first(result.id, result.mission?.id, "se Agent Control Center") + " · " + statusLabel(asStatus(result.mission || result)) : "Uppdraget kunde inte skapas. Se serverns blockeringsorsak ovan. Ingen pågående aktivitet antas.");
+  });
+  async function loadCRM() {
+    const params = new URLSearchParams({ q: byId("crm-query").value.trim(), industry: byId("crm-industry").value.trim(), geography: byId("crm-geography").value.trim(), mode: byId("crm-mode").value, sort: byId("crm-sort").value });
+    state.crmQuery = params.toString(); state.crm = await api("/api/crm/leads?" + state.crmQuery); renderCRM(state.crm);
+  }
+  byId("crm-filter-form").addEventListener("submit", async (event) => { event.preventDefault(); setBusy(byId("crm-filter-submit"), true); try { await loadCRM(); } catch (error) { showError(error.message); } finally { setBusy(byId("crm-filter-submit"), false); } });
+  byId("factory-form").addEventListener("submit", async (event) => {
+    event.preventDefault(); const result = await mutate(byId("factory-submit"), "/api/factory/orders", { idempotency_key: key("factory-order"), type: byId("factory-type").value, brief: byId("factory-brief").value.trim(), source_ids: ids(byId("factory-sources").value), lead_ids: ids(byId("factory-leads").value) }, "Den interna beställningen är skapad. Generering kräver ett separat köbeslut.");
+    text("factory-feedback", result ? "Beställning " + first(result.id, result.order?.id, "registrerad") + " skapad. Ingen generering eller kundleverans har startats automatiskt." : "Beställningen blockerades. Se serverns felmeddelande ovan.");
+  });
+  byId("internal-schedule-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const result = await saveConfig("internal-schedule-form", "schedule-submit", "/api/internal/schedules/" + encodeURIComponent(byId("schedule-id").value.trim()), { enabled: byId("schedule-enabled").checked, kind: byId("schedule-kind").value, cadence: byId("schedule-cadence").value, daily_at: byId("schedule-time").value, interval_minutes: Number(byId("schedule-interval").value), max_runs_per_day: Number(byId("schedule-runs").value), max_cost_minor: Math.round(Number(byId("schedule-cost").value) * 100), timezone: "Europe/Stockholm", goal: byId("schedule-goal").value.trim(), source_ids: ids(byId("schedule-sources").value), order_id: byId("schedule-order").value.trim(), lead_id: byId("schedule-lead").value.trim(), reason: byId("schedule-reason").value.trim() }, "Det interna schemat är granskat och sparat.");
+    text("schedule-feedback", result ? "Schema " + result.id + " · " + (result.enabled ? "aktivt internt schema" : "avstängt") + " · nästa planerade tid " + date(result.next_run_at) : "Schemat blockerades. Se serverns felmeddelande.");
+  });
+  byId("agent-role-cards").addEventListener("submit", async (event) => {
+    const form = event.target.closest(".agent-config-form"); if (!form) return;
+    event.preventDefault(); const fields = new FormData(form), payload = { enabled: fields.get("enabled") === "on", reason: fields.get("reason"), tools: fields.getAll("tools") };
+    for (const name of ["priority", "per_call_limit_minor", "daily_budget_minor", "max_calls_per_day"]) payload[name] = Number(fields.get(name));
+    const result = await mutate(form.querySelector("button"), "/api/agents/" + encodeURIComponent(form.dataset.role) + "/config", payload, "Rollens interna begränsningar är sparade. Inga externa befogenheter har lagts till.");
+    if (result) { delete form.dataset.dirty; document.activeElement.blur(); renderAgents(state.v12?.agents || {}); }
+  });
+  byId("agents-refresh").addEventListener("click", refresh);
+  function selectPage() {
+    const agentsPage = location.pathname.replace(/\/$/, "") === "/agents";
+    if (agentsPage) for (const brand of document.querySelectorAll("a.brand")) brand.href = "/#overview";
+    for (const section of document.querySelectorAll(".page-section")) section.hidden = agentsPage ? section.id !== "agent-center" : section.id === "agent-center";
+    for (const link of document.querySelectorAll(".navigation .nav-link")) {
+      const href = link.getAttribute("href");
+      if (agentsPage && href.startsWith("#")) link.href = "/" + href;
+      link.classList.toggle("active", agentsPage ? link.id === "agents-navigation" : href === (location.hash || "#overview"));
+      if (link.classList.contains("active")) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current");
+    }
+    const heading = document.querySelector(".breadcrumb strong"); if (heading) heading.textContent = agentsPage ? "Agent Control Center" : "Kontrollpanel";
+  }
+  selectPage();
   byId("pipeline-config-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!isAdmin() || !dataVersionReady()) return;

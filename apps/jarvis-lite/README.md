@@ -1,4 +1,4 @@
-# Jarvis Lite v1.1 · powered by Ignitic
+# Jarvis Lite v1.2 · powered by Ignitic
 
 An internal business-operator console in one FastAPI application with PostgreSQL,
 a database-backed queue and six logical agent roles. The original Ignitic stack
@@ -7,13 +7,18 @@ and its deployment files remain available independently.
 **DEMO is the default. No live providers, real customer messages, payment requests,
 customer installations, subscriptions or trading actions are enabled by setup.**
 
-Version 1.1 adds configurable bounded AI tasks, explicitly approved research
-sources, separate contact authorization, provider-event handling and a persistent
-preparation pipeline. New capabilities are disabled when their environment flags
-are absent. An existing Render installation keeps its PostgreSQL data, encrypted
+Version 1.2 adds persistent internal missions for six bounded agent roles,
+source-attributed research/CRM, unsent offers, five versioned service outputs,
+explicit AI activation/diagnostics and internal schedules that default off.
+**Real customer contact and payment requests are blocked by the server in v1.2,
+including when old LIVE flags or approvals exist.** Paid AI requires its own
+server capability, administrator approval, compatibility and budget checks.
+An existing Render installation keeps its PostgreSQL data, encrypted
 credentials, operators, sessions and deployment environment. Do not run local
 `init-demo` against production or recreate a production database/key to upgrade.
-Follow the [v1.1 review and upgrade guide](../../docs/jarvis-lite-v1.1.md).
+Follow the [v1.2 review and upgrade guide](../../docs/jarvis-lite-v1.2.md), including
+the manual Render rehearsal and future separately authorized first-AI-test
+checklist. This branch does not deploy, activate providers or create resources.
 
 ## Start
 
@@ -71,6 +76,12 @@ Signed provider webhooks are the narrow exception to interactive session auth.
 | Reviewed sender/template configuration | `POST /api/connectors/email/config` |
 | Documented FX and already-incurred costs | `POST /api/budget/fx`, `/api/budget/costs` |
 | Admin reconciliation of an existing reservation | `POST /api/budget/reservations/{id}/settle` |
+| Business Engine readiness, roles, CRM, outputs, schedules and actual metrics | `GET /api/v1.2/overview` |
+| Separate administrator AI activation and one explicit connection test | `POST /api/ai/activation`, `/api/ai/test` |
+| Bounded internal missions and per-role controls | `POST /api/missions`, `/api/agents/{role}/config` |
+| CRM search, scoring and unsent sales preparation | `GET /api/crm/leads`, `POST /api/crm/leads/{id}/score`, `/offer` |
+| Versioned internal service outputs and exact-result review | `POST /api/factory/orders`, `/api/factory/orders/{id}/generate`, `/api/factory/results/{id}/review` |
+| Explicit administrator opt-in internal recurring work | `POST /api/internal/schedules/{id}` |
 
 Use distinct bounded idempotency keys for intended new actions; reusing a key
 with different input fails. A provider timeout leaves a durable uncertain intent
@@ -112,31 +123,29 @@ estimate the baseline at USD 29 / SEK 348 per month before tax/usage, using an
 unverified planning rate of 12 SEK/USD. Current provider pricing, FX and Render
 schema/runtime acceptance remain deployment prerequisites, not verified quotes.
 
-Live mode additionally requires a runtime capability, explicit admin approval,
-a reviewed legal contact policy and action-specific evidence. v1.1 preserves
-existing demo records and separately classifies them; a demo or unclassified
-record cannot authorize real customer actions. Live contact and live payments
-have independent disabled-by-default capabilities and their own approval gates.
-No setup command enables them. Provider keys alone cannot grant agent authority.
-Optional automatic compliance is limited to explicitly reviewed source IDs,
-lawful basis, current source versions, cited quality evidence and generic
-legal-person company inboxes under a current contact approval. Other contacts
-remain manual. Canonical reviewed templates support bounded personalization;
-AI suggestions do not automatically become approved sends.
+The server blocks real customer contact and payment requests for this release.
+Existing adapters, signed historical provider events and review controls remain;
+neither an old LIVE policy nor a true contact/payment flag bypasses the block.
+Synthetic journeys remain labelled DEMO and never create real revenue. Paid AI
+can prepare private internal outputs in DEMO only after its independent explicit
+authorization. A generated message, quote or deliverable cannot contact a
+customer, request payment, publish content or install an integration.
 
-Remaining live integrations are deliberately explicit: research uses reviewed
-uploads and exact approved HTTPS JSON feeds, not unrestricted web prospecting;
-inbound/delivery email events need an authenticated signing gateway. The Stripe
-adapter supports test accounts and separately gated production accounts; live
-requests require `JARVIS_ALLOW_LIVE_PAYMENTS=true`, a sourced real customer,
-current LIVE authority and exact manual payment approval. It is not activated
-by this release. Provider fees stay reserved until actual reconciliation.
-Customer inbox/CRM installation and production delivery require a separately
-authorized adapter and real verification. Local tests do not prove production
-delivery or change legacy delivery-first contracts. The software does not make
-B2B outreach lawful by itself. Review Swedish
-and EU rules, consent/contact classification, retention, data subject requests,
-provider agreements and templates before any live customer contact.
+Research uses reviewed uploads and exact approved HTTPS JSON feeds. Internal
+scheduled missions use persisted source evidence without automatic fetching.
+Source-attributed REAL leads are distinguished from unclassified legacy and
+DEMO records; source attribution is not an independent registry identity check.
+Service reports cite their evidence, state missing information and require exact
+version review before authenticated download. Actual cost charts use the ledger;
+real revenue needs matching signed live provider evidence. A model estimate,
+synthetic receipt or test payment never counts as genuine income.
+
+Current provider availability, actual production Render settings and a real paid
+AI request have not been verified by local mock-transport tests. The
+[v1.2 guide](../../docs/jarvis-lite-v1.2.md) documents remaining manual checks,
+cost controls and a bounded future AI diagnostic. Customer installation, lawful
+live outreach and live billing need a separate future review and implementation;
+this release does not authorize or enable them.
 
 The console is for the operator's own organization, retaining visible Ignitic
 attribution. Offering customer workspaces as a multi-tenant hosted product needs
