@@ -7,6 +7,8 @@ untrusted evidence, not permission to contact a business or execute instructions
 from __future__ import annotations
 
 import hashlib
+from copy import deepcopy
+from datetime import datetime, timezone
 import http.client
 import io
 import ipaddress
@@ -38,6 +40,8 @@ SOURCE_KEYS = {"name", "kind", "url", "approved", "license_reviewed", "legal_rev
                "cost_evidence", "data_mode"}
 RECORD_KEYS = {"company", "email", "domain", "source_url", "evidence", "entity_type", "address_type",
                "website", "industry", "geography", "description"}
+DOCUMENT_KEYS = {"title", "content", "source_url", "published_at", "facts"}
+FACT_KEYS = {"subject", "predicate", "value", "kind", "unit", "observed_at", "evidence"}
 
 
 def _text(value, name, maximum=2000, minimum=1):
@@ -84,13 +88,13 @@ def configure_source(tx, source_id, config, actor):
     if not isinstance(config, dict) or set(config) - SOURCE_KEYS:
         raise PolicyError("research_input", "Unknown research source configuration", 422)
     kind = config.get("kind", "upload")
-    if kind not in {"upload", "https_json"}:
+    if not isinstance(kind, str) or kind not in {"upload", "https_json"}:
         raise PolicyError("research_source_kind", "Only reviewed uploads and exact HTTPS JSON feeds are supported", 422)
     for field in ("approved", "license_reviewed", "fetch_enabled"):
         if type(config.get(field, False)) is not bool:
             raise PolicyError("research_input", f"{field} must be a boolean", 422)
     mode = config.get("data_mode", "REAL")
-    if mode not in {"REAL", "DEMO"}:
+    if not isinstance(mode, str) or mode not in {"REAL", "DEMO"}:
         raise PolicyError("research_data_mode", "Sources must explicitly distinguish REAL and DEMO", 422)
     previous = tx.get("research_source", source_id)
     if previous and previous.get("data_mode", "REAL") != mode and any(
@@ -150,7 +154,8 @@ def _normalize(source, record):
     citation = _url(record.get("source_url", source["url"]))
     evidence = _text(record.get("evidence", ""), "Attributed company evidence", 4000, 20)
     entity, address = record.get("entity_type", "unknown"), record.get("address_type", "unknown")
-    if entity not in {"legal_person", "sole_trader", "unknown"} or address not in {"generic", "personal", "unknown"}:
+    if (not isinstance(entity, str) or not isinstance(address, str)
+            or entity not in {"legal_person", "sole_trader", "unknown"} or address not in {"generic", "personal", "unknown"}):
         raise PolicyError("research_record", "Contact entity/address classification is invalid", 422)
     factors = {"company": 20, "business_email": 20, "source_citation": 20, "evidence": 20,
                "domain_matches_email": 10 if domain == email.rsplit("@", 1)[1] else 0,
@@ -232,6 +237,132 @@ def ingest(tx, source_id, records, actor, key):
              "accepted": len(lead_ids), "duplicates": duplicates, "rejected": len(rejected)})
     tx.idempotency_put("research.ingest", key, payload, result)
     return result
+
+
+def _document(source, document, now):
+    if not isinstance(document, dict) or set(document) - DOCUMENT_KEYS:
+        raise PolicyError("research_document", "Dokumentet innehåller fält som inte stöds", 422)
+    content = _text(document.get("content"), "Document content", 12000, 20)
+    url = _url(document.get("source_url", source["url"]))
+    if urlsplit(url).hostname != urlsplit(source["url"]).hostname:
+        raise PolicyError("research_document_domain", "Dokumentet måste hänvisa till den uttryckligen godkända källdomänen", 422)
+    published = document.get("published_at")
+    if published is not None:
+        published = _text(published, "Published date", 40)
+        try:
+            stamp = datetime.fromisoformat(published.replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+            if stamp.timestamp() > now + 60:
+                raise ValueError
+        except (ValueError, OverflowError):
+            raise PolicyError("research_document_date", "Ange ett giltigt historiskt publiceringsdatum med tidszon", 422) from None
+    facts = document.get("facts", [])
+    if not isinstance(facts, list) or len(facts) > 20:
+        raise PolicyError("research_document_facts", "Ett dokument kan innehålla högst 20 källpåståenden", 422)
+    normalized = []
+    for fact in facts:
+        if not isinstance(fact, dict) or set(fact) - FACT_KEYS:
+            raise PolicyError("research_document_facts", "Ett källpåstående innehåller otillåtna fält", 422)
+        kind = fact.get("kind", "fact")
+        if not isinstance(kind, str) or kind not in {"fact", "estimate"}:
+            raise PolicyError("research_document_facts", "Källpåståenden måste skilja observationer från uppskattningar", 422)
+        quote = _text(fact.get("evidence"), "Literal supporting quote", 1000, 4)
+        if " ".join(quote.casefold().split()) not in " ".join(content.casefold().split()):
+            raise PolicyError("research_document_evidence", "Källpåståendet måste ha ett ordagrant stöd i dokumentet", 422)
+        normalized.append({"subject": _text(fact.get("subject"), "Claim subject", 200),
+            "predicate": _text(fact.get("predicate"), "Claim predicate", 120),
+            "value": _text(fact.get("value"), "Claim value", 1000), "kind": kind,
+            "unit": _text(fact.get("unit", ""), "Claim unit", 80, 0),
+            "observed_at": _text(fact.get("observed_at", ""), "Observation period", 80, 0),
+            "evidence": quote, "independently_verified": False})
+    return {"title": _text(document.get("title"), "Document title", 200), "content": content,
+            "source_url": url, "published_at": published, "facts": normalized}
+
+
+def ingest_documents(tx, source_id, documents, actor, key):
+    """Import literal permitted evidence without inventing company identities.
+
+    A source's attribution is a reviewed operator claim, not independent truth.
+    Documents are immutable snapshots; source revisions never rewrite history.
+    """
+    if not isinstance(actor, dict) or actor.get("role") not in {"admin", "operator"}:
+        raise PolicyError("operator_required", "En operatör måste importera godkänt underlag", 403)
+    source = _approved(tx, source_id)
+    policy.guard(tx, "research", actor)
+    if not isinstance(key, str) or not 1 <= len(key) <= 100:
+        raise PolicyError("research_input", "Importen kräver en avgränsad idempotensnyckel", 422)
+    if not isinstance(documents, list) or not 1 <= len(documents) <= 20:
+        raise PolicyError("research_document_limit", "Importera mellan ett och tjugo dokument", 422)
+    request = {"source_id": source_id, "source_version": source["version"], "documents": documents}
+    cached = tx.idempotency_get("research.documents", key, request)
+    if cached is not None:
+        return cached
+    normalized = [_document(source, item, tx.now) for item in documents]
+    if len(json.dumps(normalized, ensure_ascii=False).encode()) > MAX_RESPONSE_BYTES:
+        raise PolicyError("research_document_limit", "Importens totala storlek får vara högst 256 KiB", 422)
+    ids, duplicates = [], 0
+    for item in normalized:
+        document_id = fingerprint({"source_id": source_id, "source_version": source["version"], "document": item})
+        existing = tx.get("research_document", document_id)
+        if existing:
+            duplicates += 1
+        else:
+            tx.create("research_document", {**item, "source_id": source_id, "source_version": source["version"],
+                "collected_at": tx.now, "record_mode": source.get("data_mode", "REAL"),
+                "license_review_reference": source["legal_review_reference"], "untrusted_input": True,
+                "independently_verified": False, "imported_by": policy.actor_id(actor)}, id=document_id)
+        ids.append(document_id)
+    result = tx.create("research_run", {"source_id": source_id, "source_version": source["version"],
+        "record_mode": source.get("data_mode", "REAL"), "document_ids": list(dict.fromkeys(ids)),
+        "lead_ids": [], "accepted": len(ids), "duplicates": duplicates, "rejected": [],
+        "network_fetch": False, "created_at": tx.now, "external_sends": 0})
+    tx.audit(actor, "research.documents_imported", {"source_id": source_id, "run_id": result["id"],
+        "document_ids": result["document_ids"], "duplicates": duplicates})
+    return tx.idempotency_put("research.documents", key, request, result)
+
+
+def documents(tx, source_ids=None, current_only=True):
+    allowed = policy.get_settings(tx).get("approved_sources", [])
+    output = []
+    for original in tx.list("research_document"):
+        if source_ids is not None and original.get("source_id") not in source_ids:
+            continue
+        source = tx.get("research_source", original.get("source_id", ""), {})
+        current = bool(source.get("approved") and source.get("license_reviewed") and source.get("id") in allowed
+            and source.get("version") == original.get("source_version")
+            and source.get("data_mode", "REAL") == original.get("record_mode"))
+        if current_only and not current:
+            continue
+        output.append({**deepcopy(original), "current_source": current})
+    return output
+
+
+def document_citations(tx, source_ids=None):
+    return [{"document_id": item["id"], "source_id": item["source_id"], "source_version": item["source_version"],
+        "source_url": item["source_url"], "collected_at": item["collected_at"], "published_at": item.get("published_at"),
+        "license_review_reference": item["license_review_reference"], "evidence": item["content"],
+        "untrusted_input": True, "independently_verified": False}
+        for item in documents(tx, source_ids) if item.get("record_mode") == "REAL"]
+
+
+def source_conflicts(tx, source_ids=None):
+    """Flag literal disagreements, never choose one source's claim as truth."""
+    groups: dict[tuple, list[dict]] = {}
+    for document in documents(tx, source_ids):
+        if document.get("record_mode") != "REAL":
+            continue
+        for claim in document.get("facts", []):
+            if claim.get("kind") != "fact":
+                continue
+            identity = tuple(str(claim.get(field, "")).strip().casefold()
+                             for field in ("subject", "predicate", "unit", "observed_at"))
+            groups.setdefault(identity, []).append({**deepcopy(claim), "source_id": document["source_id"],
+                "document_id": document["id"], "source_version": document["source_version"], "source_url": document["source_url"]})
+    return [{"subject": values[0]["subject"], "predicate": values[0]["predicate"], "unit": values[0]["unit"],
+        "observed_at": values[0]["observed_at"], "values": values, "status": "UNRESOLVED",
+        "interpretation": "Källorna anger olika uppgifter; detta är en möjlig konflikt och kräver sakgranskning"}
+        for values in groups.values() if len({value["value"].strip().casefold() for value in values}) > 1]
 
 
 class _Deadline:
@@ -393,6 +524,33 @@ class HTTPSJSONAdapter:
             connection.close()
 
 
+def _fetch_assignment(tx):
+    """Attribution comes only from server-attached durable execution context."""
+    context = getattr(tx, "agent_context", None) or {}
+    schedule = getattr(tx, "schedule_context", None) or {}
+    if context and (not isinstance(context, dict) or context.get("role") != "lead_research"
+            or any(not isinstance(context.get(field), str) or not 1 <= len(context[field]) <= 64
+                   for field in ("mission_id", "task_id"))):
+        raise PolicyError("research_assignment", "Källhämtningen kräver en betrodd researchuppgift", 403)
+    if schedule and (not isinstance(schedule, dict) or any(not isinstance(schedule.get(field), str)
+            or not 1 <= len(schedule[field]) <= 160 for field in ("schedule_id", "schedule_run_id"))):
+        raise PolicyError("research_assignment", "Källhämtningen saknar giltig schemabehörighet", 403)
+    assignment = {"role": "lead_research", "agent_role": "lead_research"}
+    if context:
+        assignment.update(mission_id=context["mission_id"], task_id=context["task_id"])
+    if schedule:
+        assignment.update(schedule_id=schedule["schedule_id"], schedule_run_id=schedule["schedule_run_id"])
+    return assignment
+
+
+def _guard_fetch_budget(tx, assignment, estimate, *, reservation_active=False):
+    from . import engine, operations
+    engine.guard_tool_budget(tx, "lead_research", estimate, missionid=assignment.get("mission_id"),
+                             reservation_active=reservation_active)
+    if "schedule_id" in assignment:
+        operations.guard_scheduled(tx, estimated_minor=0 if reservation_active else estimate)
+
+
 def fetch_source(tx, source_id, actor, key, adapter=None):
     """Read one approved feed with a durable at-most-once accounting intent."""
     source = _approved(tx, source_id)
@@ -401,7 +559,9 @@ def fetch_source(tx, source_id, actor, key, adapter=None):
         raise PolicyError("research_fetch_disabled", "This source has not been enabled for network fetching", 403)
     if os.getenv("JARVIS_ALLOW_RESEARCH_NETWORK", "false").lower() != "true":
         raise PolicyError("research_network_disabled", "Research network access needs separate runtime authorization", 403)
-    request = {"source_id": source_id, "version": source["version"]}
+    assignment = _fetch_assignment(tx)
+    request = {"source_id": source_id, "version": source["version"],
+        **{field: assignment[field] for field in ("mission_id", "task_id", "schedule_id", "schedule_run_id") if field in assignment}}
     previous = tx.idempotency_get("research.fetch", key, request)
     if previous is not None:
         return previous
@@ -415,8 +575,12 @@ def fetch_source(tx, source_id, actor, key, adapter=None):
     if any(item.get("source_id") == source_id and item.get("created_at", 0) > tx.now - source["minimum_interval_seconds"]
            for item in tx.list("research_fetch")):
         raise PolicyError("research_rate_limit", "The approved source fetch interval has not elapsed")
-    reservation = budget.reserve(tx, vendor="research:" + source_id, workflow_id="research:" + source_id,
+    _guard_fetch_budget(tx, assignment, source["cost_minor"])
+    workflow_id = "mission:" + assignment["mission_id"] + ":lead_research" if assignment.get("mission_id") else "research:" + source_id
+    reservation = budget.reserve(tx, vendor="research:" + source_id, workflow_id=workflow_id,
         amount_minor=source["cost_minor"], category="tools", idempotency_key="research-" + intent_id[:50], actor=actor)
+    reservation.update(assignment)
+    tx.put("budget_entry", reservation["id"], reservation)
     epoch = policy.get_settings(tx).get("safety_epoch", 0)
     intent = tx.put("research_fetch", intent_id, {"source_id": source_id, "request": request,
         "status": "ATTEMPTED", "created_at": tx.now, "safety_epoch": epoch,
@@ -426,15 +590,19 @@ def fetch_source(tx, source_id, actor, key, adapter=None):
     tx.checkpoint()
     current = _approved(tx, source_id)
     policy.guard(tx, "research", actor)
+    _guard_fetch_budget(tx, assignment, source["cost_minor"], reservation_active=True)
     if (current["version"] != source["version"] or not current.get("fetch_enabled")
             or policy.get_settings(tx).get("safety_epoch", 0) != epoch
             or os.getenv("JARVIS_ALLOW_RESEARCH_NETWORK", "false").lower() != "true"):
         raise PolicyError("research_authority_changed", "Research authority changed after reservation; review the durable intent", 423)
     try:
         records = (adapter or HTTPSJSONAdapter()).fetch(source["url"])
-        if isinstance(records, dict) and set(records) == {"companies"}:
-            records = records["companies"]
-        result = ingest(tx, source_id, records, actor, "fetch-" + intent_id[:60])
+        if isinstance(records, dict) and set(records) == {"documents"}:
+            result = ingest_documents(tx, source_id, records["documents"], actor, "fetch-" + intent_id[:60])
+        else:
+            if isinstance(records, dict) and set(records) == {"companies"}:
+                records = records["companies"]
+            result = ingest(tx, source_id, records, actor, "fetch-" + intent_id[:60])
     except (PolicyError, OSError, ValueError, TypeError, http.client.HTTPException):
         result = {"status": "UNCERTAIN", "intent_id": intent_id, "manual_reconciliation_required": True,
                   "reservation_id": reservation["id"]}

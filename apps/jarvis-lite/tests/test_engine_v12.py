@@ -26,8 +26,12 @@ def db(tmp_path, monkeypatch):
 
 
 def mission(tx, **changes):
-    return engine.create_mission(tx, {"goal": "Prepare cited internal material for an incoming enquiry assistant",
+    result = engine.create_mission(tx, {"goal": "Prepare cited internal material for an incoming enquiry assistant",
         "source_ids": ["approved_fixture"], "lead_ids": [], "max_cost_minor": 2000, **changes}, OPERATOR, "mission-fixture")
+    # Exercise a persisted v1.2 mission, whose existing seven-step graph and
+    # historical statuses must remain compatible after the v1.3 upgrade.
+    result.pop("workflow_version", None)
+    return tx.put("business_mission", result["id"], result)
 
 
 def real_fixture(tx, *, role, text, workflow_id, idempotency_key, actor):

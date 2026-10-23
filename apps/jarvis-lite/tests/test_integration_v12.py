@@ -60,7 +60,7 @@ def test_readiness_roles_empty_queue_and_blocked_work_are_truthful(running):
     assert job["status"] == "paused"
     overview = client.get("/api/v1.2/overview").json()
     assert not overview["ai"]["effective_paid_enabled"]
-    assert overview["agents"]["missions"][0]["status"] == "BLOCKED"
+    assert overview["agents"]["missions"][0]["status"] == "PAUSED"
     with db.transaction() as tx:
         assert not tx.list("ai_trace") and not tx.list("budget_entry") and not tx.list("business_plan")
 
@@ -106,6 +106,10 @@ def test_all_roles_real_adapter_durable_jobs_sources_and_admin_output_review(run
                 "next_actions": ["Review the cited material internally"],
                 "limitations": ["Only supplied synthetic evidence was analyzed; no website inspection occurred."],
                 "company_ids": [item["id"] for item in prompt["known_companies"]]}
+        elif "verdict:pass|revise|review" in prompt.get("task", ""):
+            # New missions also validate actual post-delivery Compliance QA.
+            content = {"verdict": "pass", "findings": [], "summary": "Actual supplied synthetic evidence and internal draft were reviewed.",
+                       "source_ids": ["synthetic-directory"]}
         else:
             content = "Actual synthetic provider analysis of supplied internal facts; no authority is granted."
         return httpx.Response(200, json={"id": "synthetic-completion-" + str(len(calls)),
@@ -205,8 +209,8 @@ def test_job_controls_update_persisted_agent_and_mission_status(running, stop):
         assert response.status_code == 200, response.text
     with db.transaction() as tx:
         task = tx.list("agent_task")[0]
-        assert task["status"] == ("FAILED" if stop in {"cancel", "lease_exhausted"} else "BLOCKED")
-        assert tx.get("business_mission", created["id"])["status"] == ("CANCELLED" if stop == "cancel" else "BLOCKED")
+        assert task["status"] == ("CANCELLED" if stop == "cancel" else "FAILED" if stop == "lease_exhausted" else "PAUSED")
+        assert tx.get("business_mission", created["id"])["status"] == ("CANCELLED" if stop == "cancel" else "FAILED" if stop == "lease_exhausted" else "PAUSED")
         assert tx.list("ai_trace") == []
 
 
@@ -253,5 +257,9 @@ def test_stop_during_durable_ai_handoff_cannot_be_overwritten(running, monkeypat
     assert interrupted and result["status"] == ("cancelled" if control == "cancel" else "paused")
     with db.transaction() as tx:
         assert tx.get("business_mission", created["id"])["status"] == ("CANCELLED" if control == "cancel" else "PAUSED")
-        assert tx.list("agent_task")[0]["status"] == ("FAILED" if control == "cancel" else "BLOCKED")
+        assert tx.list("agent_task")[0]["status"] == ("CANCELLED" if control == "cancel" else "PAUSED")
         assert tx.list("business_plan") == [] and len(tx.list("job")) == 1
+        # A definitive pre-dispatch stop releases its liability even while
+        # preserving the administrator's mission/task state across checkpoint.
+        assert tx.list("budget_entry")[0]["state"] == "RELEASED"
+        assert tx.list("ai_trace")[0]["status"] == "BLOCKED"

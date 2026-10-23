@@ -21,6 +21,10 @@ class Mission(Key):
     deliverable_kind: str = "market_analysis"
     max_cost_minor: int = Field(default=2000, ge=1, le=50000)
     priority: str = "normal"
+    max_steps: int = Field(default=9, ge=7, le=9)
+    max_retries: int = Field(default=1, ge=0, le=2)
+    deadline_seconds: int = Field(default=3600, ge=60, le=86400)
+    max_revisions: int = Field(default=1, ge=0, le=1)
 
 
 class Order(Key):
@@ -80,7 +84,9 @@ def register_routes(app, db, who):
     @app.post("/api/missions")
     def create_mission(body: Mission, request: Request):
         with db.transaction() as tx:
-            payload = body.model_dump(exclude={"idempotency_key"})
+            # Preserve absence of newly added controls so retries from v1.2
+            # clients can resolve their original persisted request fingerprint.
+            payload = body.model_dump(exclude={"idempotency_key"}, exclude_unset=True)
             if body.priority not in {"high", "normal", "low"}:
                 raise policy.PolicyError("priority", "Choose high, normal or low priority", 422)
             payload["priority"] = {"high": 10, "normal": 50, "low": 90}[body.priority]

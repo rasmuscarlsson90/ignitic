@@ -37,6 +37,11 @@ def _epoch(settings: dict) -> int:
     return int(settings.get("safety_epoch", 0))
 
 
+def _attempt_limit(job: dict) -> int:
+    value = job.get("max_attempts", MAX_ATTEMPTS)
+    return value if type(value) is int and 1 <= value <= MAX_ATTEMPTS else 1
+
+
 def _save(tx, job: dict) -> dict:
     job["updated_at"] = tx.now
     return tx.put("job", job["id"], job)
@@ -140,7 +145,7 @@ def resume(tx, job_id: str, *, actor: Any, reason: str = "Administrator reviewed
         raise PolicyError("job_not_paused", "Only paused or reviewed failed jobs can be resumed")
     job.update(status="queued", paused_reason=None, error_code=None, lease_token=None,
                lease_until=None, run_at=tx.now, safety_epoch=_epoch(settings))
-    if job["attempts"] >= MAX_ATTEMPTS:
+    if job["attempts"] >= _attempt_limit(job):
         job["attempts"] = 0
     job["manual_resumes"] = int(job.get("manual_resumes", 0)) + 1
     result = _save(tx, job)
@@ -175,6 +180,9 @@ def cancel(tx, job_id: str, *, actor: Any, reason: str) -> dict:
         raise PolicyError("reconciliation_required", "Unknown provider outcomes require evidence-based reconciliation")
     if job["status"] in {"completed", "cancelled"}:
         return job
+    if job["kind"] == "internal_agent":
+        from . import engine
+        engine.guard_cancel_job(tx, job)
     job.update(status="cancelled", lease_token=None, lease_until=None,
                cancelled_at=tx.now, cancelled_by=_identity(actor), cancellation_reason=reason.strip())
     result = _save(tx, job)
@@ -203,6 +211,8 @@ def claim(db, *, lease_seconds: float = LEASE_SECONDS) -> dict | None:
     if not 1 <= lease_seconds <= 600:
         raise ValueError("Lease duration must be between 1 and 600 seconds")
     with db.transaction() as tx:
+        from . import engine
+        engine.expire_missions(tx)
         settings = policy.get_settings(tx)
         if settings.get("kill_switch"):
             pause_for_kill(tx)
@@ -222,7 +232,7 @@ def claim(db, *, lease_seconds: float = LEASE_SECONDS) -> dict | None:
                 continue
             if job["run_at"] > tx.now:
                 continue
-            if job["attempts"] >= MAX_ATTEMPTS:
+            if job["attempts"] >= _attempt_limit(job):
                 job.update(status="failed", error_code="lease_exhausted", lease_token=None, lease_until=None)
                 _save(tx, job)
                 _sync_agent_stop(tx, job, "lease_exhausted")
@@ -317,7 +327,7 @@ def _failure(db, claimed: dict, error: Exception) -> None:
         elif isinstance(error, PolicyError):
             job.update(status="paused", paused_reason=str(code)[:100])
             _task(tx, job, "A policy or approval requirement needs manual review")
-        elif job["attempts"] >= MAX_ATTEMPTS:
+        elif job["attempts"] >= _attempt_limit(job):
             job.update(status="failed", paused_reason="attempt_limit")
             _task(tx, job, "The job reached its bounded attempt limit")
         else:
@@ -353,13 +363,15 @@ def run_once(db) -> dict | None:
             if (current["status"] != "leased" or current.get("lease_token") != claimed["lease_token"]
                     or settings.get("kill_switch") or current["safety_epoch"] != _epoch(settings)):
                 return current
-            if isinstance(result, dict) and result.get("status") in {"UNCERTAIN", "UNKNOWN"}:
+            if isinstance(result, dict) and (result.get("status") in {"UNCERTAIN", "UNKNOWN"}
+                                             or result.get("uncertain_outcome") is True):
                 job.update(status="uncertain", result=result, lease_token=None, lease_until=None,
                            paused_reason="provider_outcome_requires_review", error_code="provider_uncertain")
                 _task(tx, job, "Provider outcome is unknown; automatic retries are forbidden")
                 return _save(tx, job)
-            if isinstance(result, dict) and result.get("status") == "BLOCKED":
-                job.update(status="paused", result=result, lease_token=None, lease_until=None,
+            if isinstance(result, dict) and (result.get("status") == "BLOCKED" or (
+                    job["kind"] == "internal_agent" and result.get("status") in {"PAUSED", "REVIEW_REQUIRED", "FAILED"})):
+                job.update(status="failed" if result.get("status") == "FAILED" else "paused", result=result, lease_token=None, lease_until=None,
                            paused_reason=result.get("reason", "internal_approval_required"),
                            error_code=result.get("code", "internal_blocked"))
                 return _save(tx, job)
