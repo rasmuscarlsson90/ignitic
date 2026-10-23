@@ -1,0 +1,55 @@
+# Review-only plan. Applying this Blueprint CREATES PAID resources.
+# Check docs/jarvis-lite-budget.md and obtain separate deployment approval first.
+# The full-stack render.yaml is intentionally unchanged.
+# yaml-language-server: $schema=https://render.com/schema/render.yaml.json
+previews:
+  generation: "off"
+
+services:
+  - type: web
+    name: jarvis-lite
+    runtime: docker
+    region: frankfurt
+    plan: starter
+    numInstances: 1
+    autoDeployTrigger: "off"
+    rootDir: apps/jarvis-lite
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: JARVIS_ENV
+        value: production
+      - key: JARVIS_DATABASE_URL
+        fromDatabase:
+          name: jarvis-lite-postgres
+          property: connectionString
+      - key: JARVIS_SESSION_SECRET
+        generateValue: true
+      # Stable Fernet key: URL-safe base64 encoding of exactly 32 random bytes.
+      # Generic generateValue does not guarantee the required encoding.
+      - key: JARVIS_ENCRYPTION_KEY
+        sync: false
+      # Initial administrator only. Remove bootstrap values after first login.
+      - key: JARVIS_BOOTSTRAP_EMAIL
+        sync: false
+      - key: JARVIS_BOOTSTRAP_PASSWORD
+        sync: false
+      - key: JARVIS_ALLOW_LIVE
+        value: "false"
+      - key: KILL_SWITCH
+        value: "false"
+      - key: JARVIS_WORKER_ENABLED
+        value: "true"
+
+databases:
+  - name: jarvis-lite-postgres
+    region: frankfurt
+    plan: basic-1gb
+    postgresMajorVersion: "16"
+    databaseName: jarvis_lite
+    user: jarvis
+    diskSizeGB: 10
+    ipAllowList: []

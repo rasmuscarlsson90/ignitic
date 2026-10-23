@@ -48,12 +48,18 @@ jobs:
               - 'docker-compose.yml'
               - '.env.example'
               - '.dockerignore'
-              - 'apps/*/Dockerfile'
+              - 'apps/frontend/Dockerfile'
+              - 'apps/backend/Dockerfile'
+              - 'apps/ai-engine/Dockerfile'
+              - 'apps/mcp/Dockerfile'
               - '.github/workflows/ci.yml'
             render:
               - 'render.yaml'
               - 'deploy/render/**'
-              - 'apps/*/Dockerfile'
+              - 'apps/frontend/Dockerfile'
+              - 'apps/backend/Dockerfile'
+              - 'apps/ai-engine/Dockerfile'
+              - 'apps/mcp/Dockerfile'
               - '.github/workflows/ci.yml'
 
   secrets:

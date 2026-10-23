@@ -1,0 +1,44 @@
+# Local development only. Never deploy this file as production infrastructure.
+# Use --env-file apps/jarvis-lite/.env explicitly; do not reuse full-stack .env.
+name: jarvis-lite
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: jarvis
+      POSTGRES_DB: jarvis_lite
+      POSTGRES_PASSWORD: ${JARVIS_POSTGRES_PASSWORD:?Generate the ignored Lite .env first}
+    volumes:
+      - jarvis-lite-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jarvis -d jarvis_lite"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  web:
+    image: jarvis-lite:local
+    build:
+      context: ./apps/jarvis-lite
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      JARVIS_DATABASE_URL: postgresql+psycopg://jarvis:${JARVIS_POSTGRES_PASSWORD}@postgres:5432/jarvis_lite
+      JARVIS_SESSION_SECRET: ${JARVIS_SESSION_SECRET:?Generate the ignored Lite .env first}
+      JARVIS_ENCRYPTION_KEY: ${JARVIS_ENCRYPTION_KEY:?Generate the ignored Lite .env first}
+      JARVIS_ENV: development
+      JARVIS_ALLOW_LIVE: "false"
+      KILL_SWITCH: ${KILL_SWITCH:-false}
+      JARVIS_WORKER_ENABLED: "true"
+      JARVIS_BOOTSTRAP_EMAIL: ${JARVIS_BOOTSTRAP_EMAIL:-}
+      JARVIS_BOOTSTRAP_PASSWORD: ${JARVIS_BOOTSTRAP_PASSWORD:-}
+      PORT: "8000"
+    ports:
+      - "127.0.0.1:8012:8000"
+    restart: unless-stopped
+
+volumes:
+  jarvis-lite-postgres:
