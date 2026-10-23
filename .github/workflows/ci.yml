@@ -24,6 +24,7 @@ jobs:
       ai-engine: ${{ steps.filter.outputs.ai-engine }}
       mcp: ${{ steps.filter.outputs.mcp }}
       compose: ${{ steps.filter.outputs.compose }}
+      render: ${{ steps.filter.outputs.render }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
@@ -47,6 +48,11 @@ jobs:
               - 'docker-compose.yml'
               - '.env.example'
               - '.dockerignore'
+              - 'apps/*/Dockerfile'
+              - '.github/workflows/ci.yml'
+            render:
+              - 'render.yaml'
+              - 'deploy/render/**'
               - 'apps/*/Dockerfile'
               - '.github/workflows/ci.yml'
 
@@ -79,7 +85,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: apps/frontend/package-lock.json
       - run: npm ci
@@ -96,6 +102,20 @@ jobs:
     defaults:
       run:
         working-directory: apps/backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -104,10 +124,21 @@ jobs:
           cache-dependency-path: apps/backend/go.sum
       - run: go vet ./...
       - run: go build ./...
-      - name: Unit tests
+      - name: Backend unit, integration and system tests
         env:
           CGO_ENABLED: 1
-        run: go test ./tests/unit/...
+          # Exercise local fixtures without delivering email or calling vendors.
+          HTTP_PROXY: http://127.0.0.1:9
+          HTTPS_PROXY: http://127.0.0.1:9
+          http_proxy: http://127.0.0.1:9
+          https_proxy: http://127.0.0.1:9
+          NO_PROXY: localhost,127.0.0.1
+          no_proxy: localhost,127.0.0.1
+        run: go test ./tests/...
+      - name: PostgreSQL migration regression tests
+        env:
+          MIGRATION_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+        run: go test -tags=integration ./database
 
   python-lint:
     name: Python lint
@@ -164,6 +195,19 @@ jobs:
           cache-dependency-glob: apps/mcp/uv.lock
       - run: uv sync --frozen
       - run: uv run pytest tests/servers
+
+  render-blueprint:
+    name: Render Blueprint local checks (no deployment)
+    needs: changes
+    if: needs.changes.outputs.render == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install PyYAML==6.0.2
+      - run: python deploy/render/validate_blueprint.py
 
   compose:
     name: Docker Compose

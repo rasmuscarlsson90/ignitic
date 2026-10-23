@@ -10,10 +10,8 @@ docker-compose.yml
 
 # Environment files
 .env
-.env.local
-.env.development
-.env.test
-.env.production
+.env.*
+!.env.example
 
 # Dependencies and build artifacts
 vendor/
@@ -57,6 +55,10 @@ temp/
 # Build outputs
 dist/
 build/
+bin/
+main
+backend
+assets/
 *.exe
 *.exe~
 *.dll
@@ -70,4 +72,4 @@ build/
 *.out
 
 # Dependency directories
-vendor/ 
+vendor/

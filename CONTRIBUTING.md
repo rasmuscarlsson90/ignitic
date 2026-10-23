@@ -15,8 +15,8 @@ For large changes (new agents, schema changes, new services), open an issue firs
 
 | Path | Stack | Toolchain |
 |------|-------|-----------|
-| `apps/frontend` | Next.js 15, TypeScript | Node 20, npm |
-| `apps/backend` | Go 1.23, Gin, PostgreSQL | Go 1.23 (CGO for SQLite tests) |
+| `apps/frontend` | Next.js 15, TypeScript | Node 24, npm 11+ |
+| `apps/backend` | Go 1.26, Gin, PostgreSQL | Go 1.26 (CGO for SQLite tests) |
 | `apps/ai-engine` | Python 3.12, FastAPI, LangGraph | [uv](https://docs.astral.sh/uv/) |
 | `apps/mcp` | Python 3.12, FastMCP | uv |
 

@@ -60,6 +60,22 @@ cd backend
 go test ./tests/integration
 ```
 
+PostgreSQL migration regression tests are separate from the SQLite suites. From
+`apps/backend`, set `MIGRATION_TEST_DATABASE_URL` securely to a PostgreSQL maintenance
+URL whose role can create databases, then run:
+
+```bash
+go test -tags=integration -count=1 ./database -run TestPostgresMigrations -v
+```
+
+The tests require PostgreSQL 13+ and never migrate the configured database. Each
+test creates a uniquely named `ignitic_migrations_*` database and removes only
+that database during cleanup. They verify all migrations through version 22,
+repeat application, preservation of populated legacy rows and UUID relationships,
+unique/foreign-key enforcement, and transactional rollback for unknown secret
+creators. No external APIs are called. Keep the maintenance URL out of logs and
+version control; selecting the integration build tag without it fails explicitly.
+
 Run only system tests:
 
 ```bash

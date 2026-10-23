@@ -10,7 +10,8 @@ CREATE INDEX IF NOT EXISTS idx_logs_section ON logs(section);
 CREATE INDEX IF NOT EXISTS idx_logs_auth_result ON logs(auth_result);
 -- +goose StatementEnd
 
-
+-- +goose Down
+-- +goose StatementBegin
 DROP INDEX IF EXISTS idx_logs_section;
 DROP INDEX IF EXISTS idx_logs_auth_result;
 ALTER TABLE logs
