@@ -4,7 +4,7 @@ import json
 import httpx
 import pytest
 
-from jarvis_lite import connectors, policy
+from jarvis_lite import connectors, outreach, policy
 from jarvis_lite.policy import PolicyError
 from jarvis_lite.store import Database
 from jarvis_lite import budget
@@ -12,6 +12,7 @@ from jarvis_lite import budget
 
 ADMIN = {"id": "connector-test-admin", "role": "admin"}
 OPERATOR = {"id": "connector-test-operator", "role": "operator"}
+ORIGINAL_HOOK = connectors._hook
 
 
 @pytest.fixture
@@ -282,7 +283,7 @@ def test_mocked_brevo_and_stripe_adapters_use_fixed_https_endpoints(db):
     assert result["provider_reference"] == "cs_test_one"
     assert requests[1].headers["Idempotency-Key"] == "pay-key"
     assert all(request.url.scheme == "https" for request in requests)
-    with pytest.raises(PolicyError, match="test credentials only"):
+    with pytest.raises(PolicyError, match="separate payment capability"):
         connectors.StripeAdapter("sk_live_forbidden", transport=transport).create_request({
             "id": "p", "total_minor": 1, "service_id": "s", "reference": "r",
         }, customer_email="demo@example.com", return_origin="https://jarvis.example.com", idempotency_key="bad")
@@ -307,14 +308,31 @@ def test_llm_cannot_issue_payment_or_tool_actions(db):
 
 def live_email_setup(db, monkeypatch):
     monkeypatch.setenv("JARVIS_ALLOW_LIVE", "true")
+    monkeypatch.setenv("JARVIS_ALLOW_LIVE_CONTACT", "true")
     with db.transaction() as tx:
         settings = policy.get_settings(tx)
-        tx.put("settings", "global", {**settings, "mode": "LIVE", "live_approved": True, "legal_reviewed": True})
-        customer = lead(tx, compliance={"approved": True, "lawful_basis": "reviewed-explicit-consent",
+        tx.put("settings", "global", {**settings, "mode": "LIVE", "live_approved": True, "legal_reviewed": True,
+               "approved_senders": ["approved@example.com"], "public_origin": "https://jarvis.example.com"})
+        customer = lead(tx, is_test=False, record_mode="REAL",
+                        provenance={"approved": True, "source_id": "synthetic-approved-directory"},
+                        compliance={"approved": True, "lawful_basis": "reviewed-explicit-consent",
                         "legal_review": True, "channel": "email", "approval_mode": "LIVE"})
         tx.put("connector_config", "email", {"sender": "approved@example.com", "approved": True,
                "spf": True, "dkim": True, "dmarc": True, "legal_review": True,
                "approved_templates": [hashlib.sha256(b"Reviewed\nReviewed text").hexdigest()]})
+        for name in ("BREVO_API_KEY", "EMAIL_WEBHOOK_SECRET", "EMAIL_DELIVERY_WEBHOOK_SECRET"):
+            policy.set_secret(tx, name, "synthetic-provider-secret-not-a-real-key", ADMIN)
+        reference = "Synthetic reviewed domain evidence; not a real DNS or legal review"
+        outreach.configure(tx, {"provider": "brevo", "sender": "approved@example.com", "enabled": True,
+                           **dict.fromkeys(outreach.REFERENCE_FIELDS, reference)}, ADMIN)
+        # The server-owned offline probe exercises real workflow hooks; the
+        # outer adapter test's notification isolation remains intact afterward.
+        with monkeypatch.context() as probe:
+            probe.setattr(connectors, "_hook", ORIGINAL_HOOK)
+            checks = outreach.run_checks(tx, ADMIN)
+        assert checks["passed"] is True, checks
+        outreach.record_review(tx, {"statement": outreach.APPROVE, "test_id": checks["id"],
+            "legal_review_reference": reference, "reason": "Explicit synthetic administrator contact review"}, ADMIN)
     return dict(lead_id=customer["id"], subject="Reviewed", body="Reviewed text",
                 idempotency_key="durable-send", actor=OPERATOR)
 
@@ -387,15 +405,19 @@ def test_opt_out_between_reservation_and_network_blocks_email(db, monkeypatch):
 
 
 def test_live_llm_mock_reserves_frozen_fx_and_records_actual_usage(db, monkeypatch):
+    from jarvis_lite import ai
     monkeypatch.setenv("JARVIS_ALLOW_LIVE", "true")
+    monkeypatch.setenv("JARVIS_ALLOW_PAID_AI", "true")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-provider-key")
     def respond(request):
         return httpx.Response(200, json={"id": "mock-billed-completion", "usage": {
             "cost": "0.005", "prompt_tokens": 100, "completion_tokens": 20},
             "choices": [{"message": {"content": json.dumps({"action": "draft", "text": "A draft only.", "reason": "Safe scope"})}}]})
-    adapter = connectors.OpenRouterAdapter("test-provider-key", transport=httpx.MockTransport(respond))
+    adapter = ai.OpenRouterAdapter("test-provider-key", transport=httpx.MockTransport(respond))
     with db.transaction() as tx:
         settings = policy.get_settings(tx)
         tx.put("settings", "global", {**settings, "mode": "LIVE", "live_approved": True, "legal_reviewed": True})
+        ai.configure(tx, {"enabled": True, "reason": "Explicit test-only review of AI model and cost bounds"}, ADMIN)
         budget.set_fx_rate(tx, currency="USD", sek_per_unit="11", source="Explicit unit test fixture, not a market quote",
                            observed_at=tx.now, actor=ADMIN)
         result = connectors.llm_task(tx, role="sales", text="Draft a reply", workflow_id="flow-one",

@@ -64,15 +64,32 @@ def guard(tx, action, actor=None, lead=None):
     # preserve those receipts directly even while autonomy is paused.
     if settings["kill_switch"]:
         raise PolicyError("kill_switch", "Emergency stop is active; explicit resume is required", 423)
+    fence = getattr(tx, "execution_fence", None)
+    if fence is not None:
+        executing = tx.get("job", fence[0])
+        if (not executing or executing.get("status") != "leased"
+                or executing.get("lease_token") != fence[1]
+                or (executing.get("lease_until") or 0) <= tx.now):
+            raise PolicyError("job_lease_revoked", "The job was paused or its execution lease was revoked; no provider action is authorized", 423)
     if settings["mode"] == "LIVE":
         if os.getenv("JARVIS_ALLOW_LIVE", "false").lower() != "true" or not settings.get("live_approved"):
             raise PolicyError("live_disabled", "Separate live authorization has not been enabled", 403)
         if not settings.get("legal_reviewed"):
             raise PolicyError("legal_review_required", "A reviewed legal contact policy is required", 403)
-        if lead is not None and action in {"contact", "email", "send_email", "proposal", "external_write"}:
+        if action in {"contact", "email", "send_email", "proposal", "external_write"}:
+            if lead is None:
+                raise PolicyError("contact_customer_required", "Live customer actions require an identified reviewed lead", 403)
             review = lead.get("compliance", {})
             if review.get("simulation") or review.get("approval_mode") != "LIVE":
                 raise PolicyError("live_compliance", "Demo compliance evidence cannot authorize live actions", 403)
+            from . import outreach
+            outreach.guard_contact(tx, lead)
+        if action == "payment_request" and os.getenv("JARVIS_ALLOW_LIVE_PAYMENTS", "false").lower() != "true":
+            raise PolicyError("live_payments_disabled", "Payment requests require a separate deployment capability and exact manual approval", 403)
+        if action == "payment_request" and lead is not None:
+            from . import upgrade
+            if upgrade.classify_record(lead) != "REAL":
+                raise PolicyError("real_payment_customer", "Only an explicitly sourced real customer can receive a live payment request", 403)
     return settings
 
 
@@ -124,6 +141,12 @@ def update_settings(tx, changes, actor):
             or updated["minimum_discounted_price_minor"] <= 0
             or updated["minimum_discounted_price_minor"] > updated["minimum_list_price_minor"]):
         raise PolicyError("pricing_mandate", "Pricing floors and discounts must describe a valid administrator mandate", 422)
+    if ((price_keys.intersection(changes) and (
+            updated["minimum_list_price_minor"] < 500000 or updated["minimum_discounted_price_minor"] < 450000
+            or updated["max_discount_bps"] > 1000))
+            or ("total_budget_minor" in changes and updated["total_budget_minor"] > 200000)
+            or ("rolling_tools_limit_minor" in changes and updated["rolling_tools_limit_minor"] > 50000)):
+        raise PolicyError("economic_mandate", "The 5,000/4,500 SEK price floors, 10% discount, 500 SEK tools and 2,000 SEK total mandate cannot be weakened", 422)
     updated["safety_epoch"] += 1
     tx.put("settings", "global", updated)
     from . import jobs
@@ -159,3 +182,5 @@ def initialize(tx):
     get_settings(tx)
     if not tx.get("secret", "DEMO_WEBHOOK_SECRET"):
         set_secret(tx, "DEMO_WEBHOOK_SECRET", secrets.token_urlsafe(48), {"id": "bootstrap", "role": "admin"})
+    from . import upgrade
+    upgrade.initialize(tx)

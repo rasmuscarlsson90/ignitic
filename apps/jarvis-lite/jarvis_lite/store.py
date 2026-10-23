@@ -80,6 +80,7 @@ class Transaction:
     def __init__(self, conn):
         self.conn = conn
         self.now = time.time()
+        self.execution_fence: tuple[str, str] | None = None
 
     def checkpoint(self):
         """Persist a provider attempt BEFORE network I/O, then re-lock policy.

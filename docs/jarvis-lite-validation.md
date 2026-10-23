@@ -1,5 +1,43 @@
 # Jarvis Lite validation and remaining gates
 
+## v1.1 review checks (2026-10-23)
+
+The final v1.1 suite passed **249 tests, zero skipped**, including PostgreSQL
+concurrency and v1.0-shaped database preservation checks, in 33.92 seconds.
+Ruff, mypy for all 16 modules and Actions syntax validation pass. The frozen
+runtime dependency audit reports no known vulnerabilities; dependencies are
+unchanged except for the project version. One upstream TestClient deprecation
+warning remains.
+
+Final review regressions also prove an absolute research deadline across DNS,
+TCP, TLS, headers and body, including slow-drip responses. Pausing a leased job
+during a real outbox checkpoint prevents both email and AI provider dispatch
+without changing the global epoch; uncertain charges remain reserved.
+
+An isolated HTTP/browser rehearsal used actual v1.1 endpoints: approved-source
+import, attributed REAL lead, bounded preparation/legal stop, disabled paid AI,
+complete DEMO journey with manual payment approval and signed simulated receipt,
+strict zero real revenue, task resolution/approval separation and mobile/viewer
+behavior. No provider requests were sent. See the
+[v1.1 upgrade and operation guide](jarvis-lite-v1.1.md) for current behavior.
+
+The final production Docker image also passed an isolated PostgreSQL rehearsal
+seeded with the actual v1.0 image. Upgrading and restarting retained users, an
+existing authenticated session, identical encrypted secret ciphertext and
+decryption, policy, cost ledger, payment and audit history. Historical acceptance
+tasks were classified without deletion; genuine review tasks remained pending.
+The simulated journey/manual approval/signed receipt replay and zero real money
+checks passed. UID 10001, health 1.1.0, all 19 source/static files and both metadata
+files matched the reviewed checkout. Temporary test resources were removed;
+the pre-existing local services remained unchanged.
+
+The checks below describe the earlier v1.0 baseline.
+
+This is the recorded **v1.0 validation baseline**. Current v1.1 capabilities,
+upgrade checks and independent live-contact/payment gates are described in
+[the v1.1 guide](jarvis-lite-v1.1.md); the historical test count below does not
+include the new v1.1 regression suites.
+
 Validation date: 2026-10-23. This describes completed local checks, not a Render
 deployment or a proof of real customer revenue. No real provider keys, customer
 messages, payments, ads, subscriptions, customer installations or trading actions
@@ -74,13 +112,16 @@ native webhook format has been implemented. Sender SPF/DKIM/DMARC and legal
 review evidence must be established by a qualified operator/reviewer before any
 separate live enablement.
 
-Stripe currently permits test credentials and test-mode signed events only. It
-does not implement autonomous refunds, transfers, payouts or production money
-collection. Signed checkout initiation is not a paid event; paid is not bank
-payout. Production customer delivery is not installed by local tests: it creates
-a manual task and cannot unlock LIVE payment requests. OpenRouter live inference
-and Brevo deliverability were not exercised; their adapters were tested with
-mocked HTTP and must be reviewed against real sandbox/provider contracts.
+The v1.0 baseline permitted Stripe test credentials and test-mode signed events
+only. v1.1 adds a separately gated production-account adapter, without activating
+it. Autonomous refunds, transfers and payouts remain unsupported. Signed checkout
+initiation is not a paid event; paid is not bank payout. Production customer
+delivery is not installed by local tests. Legacy delivery-first contracts still
+require actual delivery proof; new explicit prepayment terms have a separate
+manual gate before signed payment evidence can create a delivery plan.
+OpenRouter live inference, Stripe live processing and Brevo deliverability were
+not exercised; adapters use mocked HTTP and require authorized sandbox/provider
+validation before live operation.
 
 Unknown provider outcomes remain quarantined with reserved budget and require
 manual reconciliation. Brevo acceptance does not provide the final invoiced

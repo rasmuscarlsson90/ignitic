@@ -18,9 +18,10 @@
     CANCELLED: "Avbruten", PAYMENT_FAILED: "Betalningsfel", MANUAL_REVIEW: "Manuell granskning", PAUSED: "Pausad",
     QUEUED: "I kö", LEASED: "Bearbetas", RUNNING: "Pågår", FAILED: "Misslyckad", UNCERTAIN: "Behöver granskas",
     DRAFT: "Utkast", APPROVED: "Godkänd", REQUESTED: "Begäran skapad", INITIATED: "Betalning inledd",
-    CONFIRMED: "Betalning bekräftad", SENT: "Skickad", DELIVERED: "Levererad", PENDING: "Väntar", DONE: "Klar"
+    CONFIRMED: "Betalning bekräftad", SENT: "Skickad", DELIVERED: "Levererad", PENDING: "Väntar", DONE: "Klar",
+    RESOLVED: "Granskad", SUPERSEDED: "Sammanförd", BLOCKED: "Spärrad", REVIEW_REQUIRED: "Kräver granskning"
   };
-  const jobNames = { demo_journey: "Simulerad kundresa", research: "Leadanalys", qualify: "Kvalificering", follow_up: "Uppföljning", daily_report: "Daglig rapport" };
+  const jobNames = { demo_journey: "Simulerad kundresa", research: "Leadanalys", qualify: "Kvalificering", follow_up: "Uppföljning", daily_report: "Daglig rapport", pipeline_advance: "Förbered nästa affärssteg", source_research: "Granska tillåten researchkälla" };
   const errorNames = {
     admin_required: "Åtgärden kräver administratörsbehörighet.",
     unauthorized: "Din session har löpt ut. Logga in igen.",
@@ -121,6 +122,7 @@
     state.user = null; state.csrf = null; state.data = null;
     byId("app-shell").hidden = true;
     byId("login-screen").hidden = false;
+    for (const form of document.querySelectorAll(".config-form")) { form.reset(); delete form.dataset.hydrated; delete form.dataset.dirty; }
     for (const dialog of document.querySelectorAll("dialog[open]")) dialog.close();
   }
   function establishSession(result) {
@@ -155,27 +157,137 @@
     return button;
   }
 
+  function recordMode(record) {
+    if (record?.record_mode === "DEMO" || record?.is_test === true || record?.source_id === "demo" || record?.provider === "demo") return "DEMO";
+    if (record?.record_mode === "REAL") return "REAL";
+    return "UNCLASSIFIED";
+  }
+  function modeLabel(record) {
+    return { REAL: "Verkliga data", DEMO: "Demodata", UNCLASSIFIED: "Äldre / ej klassificerad" }[recordMode(record)];
+  }
+  function taskNeedsDedicatedAction(task) {
+    return task.role === "FINANCE" || task.type === "job_review" || /payment|approve|approval|legal|compliance|resume|reconcile/i.test(String(task.title || ""));
+  }
+  function realMetrics(data) {
+    const metrics = data.v11?.metrics || {};
+    const real = list(data.leads).filter((lead) => recordMode(lead) === "REAL");
+    const paid = list(data.payments).filter((payment) => payment.livemode === true && payment.provider !== "demo" && asStatus(payment) === "CONFIRMED");
+    return { ...metrics,
+      real_leads: first(metrics.real_leads, real.length),
+      real_confirmed_revenue_minor: first(metrics.real_confirmed_revenue_minor, paid.reduce((sum, payment) => sum + number(payment.amount_minor), 0)),
+      real_paying_customers: first(metrics.real_paying_customers, new Set(paid.map((payment) => payment.lead_id)).size)
+    };
+  }
+  function dataVersionReady() { return Boolean(state.data?.v11); }
+  function summaryRows(id, entries) {
+    const target = byId(id);
+    target.replaceChildren();
+    for (const [label, value] of entries) target.append(el("dt", "", label), el("dd", "", value));
+  }
+  function hydrateConfig(formId, values) {
+    const form = byId(formId);
+    if (form.dataset.dirty || form.contains(document.activeElement)) return;
+    for (const [id, value] of Object.entries(values)) {
+      if (value === undefined || value === null) continue;
+      if (byId(id).type === "checkbox") byId(id).checked = Boolean(value);
+      else byId(id).value = String(value);
+    }
+    form.dataset.hydrated = "true";
+  }
+  function renderPreparation(data) {
+    const v = data.v11 || {};
+    const m = realMetrics(data);
+    const demoLeads = list(data.leads).filter((lead) => recordMode(lead) === "DEMO").length;
+    const legacyLeads = list(data.leads).filter((lead) => recordMode(lead) === "UNCLASSIFIED").length;
+    text("real-lead-count", integer.format(number(m.real_leads)));
+    text("demo-lead-count", integer.format(first(m.demo_leads, demoLeads)));
+    text("legacy-lead-count", integer.format(first(m.unclassified_leads, legacyLeads)));
+    text("demo-revenue", amount(first(m.simulated_revenue_minor, data.metrics?.simulated_revenue_minor, 0)));
+    text("real-activity-note", "Verkliga kontaktförsök: " + integer.format(number(m.real_contact_attempts)) + " · Leverantörsgodkända utskick: " + integer.format(number(m.real_contacts_sent)) + " · Oskickade utkast: " + integer.format(number(m.pending_drafts)));
+    const ai = v.ai || {};
+    const aiConfig = ai.config || {};
+    const aiPaid = ai.effective_paid_enabled === true;
+    text("ai-state", aiPaid ? "Betalda anrop separat tillåtna" : "Betalda anrop spärrade");
+    byId("ai-state").className = "badge badge-" + (aiPaid ? "warning" : "neutral");
+    summaryRows("ai-summary", [
+      ["Modell", first(aiConfig.model, "Ej konfigurerad")],
+      ["Servernyckel", ai.key_configured ? "Konfigurerad · dold" : "Ej konfigurerad"],
+      ["Kostnadstak per anrop", amount(aiConfig.per_call_limit_sek_minor)],
+      ["Spårbarhet", ai.last_trace ? "Senaste anrop registrerat" : "Inga registrerade anrop"]
+    ]);
+    hydrateConfig("ai-config-form", { "ai-model": first(aiConfig.model, "openai/gpt-4o-mini"), "ai-call-sek": number(first(aiConfig.per_call_limit_sek_minor, 200)) / 100, "ai-max-tokens": first(aiConfig.max_output_tokens, 512), "ai-timeout": first(aiConfig.timeout_seconds, 20), "ai-retries": first(aiConfig.max_retries, 1) });
+    const pipeline = v.pipeline || {};
+    text("pipeline-state", pipeline.requires_reauthorization ? "Kräver ny granskning" : pipeline.enabled ? "Förberedelser schemalagda" : "Schema avstängt");
+    byId("pipeline-state").className = "badge badge-" + (pipeline.requires_reauthorization ? "warning" : pipeline.enabled ? "success" : "neutral");
+    summaryRows("pipeline-summary", [
+      ["Arbetssätt", "Förberedelse · inget livegodkännande"],
+      ["Källor", list(pipeline.source_ids).join(", ") || "Inga valda"],
+      ["Intervall", pipeline.interval_seconds ? integer.format(pipeline.interval_seconds / 60) + " minuter" : "Ej konfigurerat"],
+      ["Blockerade steg", integer.format(number(pipeline.blocked_count))],
+      ["Väntar på granskning", integer.format(number(pipeline.awaiting_review_count))],
+      ["Betalningsordning", pipeline.billing_stage === "before_delivery" ? "Före leverans · separat granskade villkor" : "Efter verifierad leverans"],
+      ["Senast schemalagt", date(pipeline.last_scheduled_at)]
+    ]);
+    hydrateConfig("pipeline-config-form", { "pipeline-enabled": Boolean(pipeline.enabled), "pipeline-sources": list(pipeline.source_ids).join(", "), "pipeline-interval": number(first(pipeline.interval_seconds, 3600)) / 60, "pipeline-max-leads": first(pipeline.max_leads_per_tick, 5), "pipeline-followup": number(first(pipeline.follow_up_delay_seconds, 259200)) / 86400 });
+    const sources = list(v.research_sources);
+    const sourceBox = byId("sources-list");
+    sourceBox.replaceChildren();
+    text("sources-count", sources.length);
+    if (!sources.length) sourceBox.append(el("p", "empty-state", "Inga v1.1-källor har granskats ännu. Befintliga leads bevaras och klassificeras separat."));
+    for (const source of sources) {
+      const item = el("div", "source-item");
+      const heading = el("div", "task-heading");
+      heading.append(el("strong", "", first(source.name, source.id)), badge(source.approved ? "APPROVED" : "MANUAL_REVIEW", source.approved ? "Tillåten källa" : "Kräver granskning"));
+      item.append(heading, el("p", "muted small", source.id + " · " + (source.kind === "https_json" ? "Granskad HTTPS-källa" : "Godkänd katalogimport") + " · " + (source.data_mode === "DEMO" ? "Demodata" : "Verkliga uppgifter")));
+      item.append(el("p", "muted small", "Kvalitetskrav: " + first(source.minimum_quality, "—") + " / 100 · Kostnad per hämtning: " + amount(first(source.cost_minor, 0))));
+      if (source.url) item.append(el("p", "source-reference", source.url));
+      if (source.legal_review_reference) item.append(el("p", "muted small", "Tillståndsreferens: " + source.legal_review_reference));
+      if (source.kind === "upload" && source.approved && source.data_mode !== "DEMO") item.append(actionButton("Importera företagsunderlag", () => {
+        byId("import-lead-form").reset();
+        byId("import-lead-error").hidden = true;
+        byId("import-source-id").value = source.id;
+        byId("import-reference").value = source.url || "";
+        byId("import-lead-dialog").showModal();
+        byId("import-company").focus();
+      }, { disabled: !isAdmin() }));
+      sourceBox.append(item);
+    }
+    const outreach = v.outreach || {};
+    const checks = outreach.checks || {};
+    const contactEnabled = outreach.live_contact_authorized === true;
+    text("contact-gate-badge", contactEnabled ? "Separat kontaktgodkännande finns" : "Kundkontakt spärrad");
+    byId("contact-gate-badge").className = "badge badge-" + (contactEnabled ? "warning" : "neutral");
+    text("outreach-state", contactEnabled ? "Separat godkännande registrerat" : "Kundkontakt spärrad");
+    summaryRows("outreach-summary", [
+      ["Leverantör", first(outreach.provider, outreach.config?.provider, "Brevo · kräver granskning")],
+      ["Domänunderlag", checks.reviewed_domain_evidence === true ? "Operatörsgranskat underlag registrerat" : "Operatörsgranskning krävs"],
+      ["Avsändare & juridisk policy", checks.reviewed_sender_and_lawful_policy === true ? "Granskningsreferens registrerad" : "Ej godkänd"],
+      ["Testomfattning", outreach.test_scope === "isolated_offline_safety_probe" ? "Isolerad offlinekontroll · inte leveranstest" : "Separat testunderlag krävs"],
+      ["Serverns kontaktspärr", outreach.runtime_contact_enabled === true ? "Runtime-tillstånd finns · övriga kontroller kvarstår" : "Avstängd"],
+      ["Manuellt livebeslut", outreach.approval_current === true ? "Aktuellt granskningsbeslut registrerat" : "Saknas eller behöver förnyas"]
+    ]);
+    text("preparation-status", contactEnabled ? "Separat kontaktgodkännande finns registrerat. Varje enskilt steg måste fortfarande passera kontaktpolicy, budget och nödstopp." : "Godkända källor, verkliga leads och utkast kan förberedas. Kundutskick och betalningar får ingen behörighet av dessa inställningar.");
+    byId("preparation").classList.toggle("version-unavailable", !data.v11);
+  }
+
   function renderMetrics(data) {
-    const m = data.metrics || {};
+    const m = realMetrics(data);
     const leads = list(data.leads);
-    const payments = list(data.payments);
-    const countState = (...states) => leads.filter((lead) => states.includes(asStatus(lead))).length;
-    const paying = first(m.paying_customers, payments.filter((payment) => asStatus(payment) === "CONFIRMED").length);
-    text("metric-leads", integer.format(first(m.leads, leads.length)));
-    text("nav-lead-count", integer.format(first(m.leads, leads.length)));
-    text("metric-qualified", integer.format(first(m.qualified, countState("QUALIFIED"))) + " kvalificerade leads");
-    text("metric-proposals", integer.format(first(m.proposals_sent, m.proposals, countState("PROPOSAL_SENT"))));
-    text("metric-accepted", integer.format(first(m.accepted, countState("ACCEPTED"))) + " accepterade offerter");
+    const paying = number(m.real_paying_customers);
+    text("metric-leads", integer.format(number(m.real_leads)));
+    text("nav-lead-count", integer.format(leads.length));
+    text("metric-qualified", integer.format(number(m.real_qualified)) + " kvalificerade verkliga leads");
+    text("metric-proposals", integer.format(number(m.real_proposals)));
+    text("metric-accepted", integer.format(number(m.real_accepted)) + " accepterade verkliga offerter");
     text("metric-paying", integer.format(paying));
-    text("metric-revenue", amount(first(m.confirmed_revenue_minor, m.revenue_minor, 0)));
-    text("funnel-contacts", integer.format(first(m.contacts, m.contacted, countState("CONTACTED"))));
-    text("funnel-replies", integer.format(first(m.replies, countState("REPLIED"))));
-    text("funnel-proposals", integer.format(first(m.proposal_requests, m.proposals, countState("PROPOSAL_READY"))));
-    text("funnel-accepted", integer.format(first(m.accepted, countState("ACCEPTED"))));
+    text("metric-revenue", amount(m.real_confirmed_revenue_minor));
+    text("funnel-contacts", integer.format(number(m.real_contacts_sent)));
+    text("funnel-replies", integer.format(number(m.real_replies)));
+    text("funnel-proposals", integer.format(number(m.real_proposals)));
+    text("funnel-accepted", integer.format(number(m.real_accepted)));
     text("funnel-paying", integer.format(paying));
-    text("finance-outstanding", amount(first(m.outstanding_minor, m.outstanding_payments_minor, 0)));
-    const margin = first(m.gross_margin_minor, m.estimated_margin_minor);
-    text("finance-margin", margin !== undefined ? amount(margin) : "Ingen prognos ännu");
+    text("finance-outstanding", amount(number(m.real_outstanding_minor)));
+    text("finance-margin", amount(number(m.real_confirmed_revenue_minor) - number(data.budget?.actual_sek_minor)));
     const policy = data.policy || {};
     text("finance-price-rule", amount(policy.minimum_list_price_minor) + " / " + (policy.max_discount_bps === undefined ? "—" : number(policy.max_discount_bps) / 100 + " %"));
   }
@@ -200,9 +312,11 @@
     const aiCost = first(budget.by_category?.ai?.actual_sek_minor, budget.ai_minor, budget.ai_cost_minor, budget.usage?.ai, 0);
     // Categories must be reported by the server, never guessed from provider names.
     text("budget-ai", amount(aiCost));
-    text("budget-tools", amount(first(budget.usage?.tools_30d, budget.tools_30d_minor, 0)));
-    text("budget-infra", amount(first(budget.usage?.infrastructure_monthly, budget.infrastructure_minor, 0)));
+    text("budget-tools", amount(first(budget.by_category?.tools?.actual_sek_minor, budget.tools_cost_minor, 0)));
+    text("budget-infra", amount(first(budget.by_category?.infrastructure?.actual_sek_minor, budget.infrastructure_minor, 0)));
     byId("budget-ai").title = "Faktisk registrerad AI-kostnad. Pågående reserveringar ingår i totalbudgetens spärr.";
+    byId("budget-tools").title = "Faktisk registrerad verktygskostnad. Rullande gräns för AI och verktyg visas separat nedan.";
+    byId("budget-infra").title = "Faktisk registrerad infrastrukturkostnad. Externa fakturor måste räknas in även när applikationen stoppas.";
     let windows = byId("budget-windows");
     if (!windows) {
       windows = el("div", "budget-windows"); windows.id = "budget-windows";
@@ -240,7 +354,7 @@
       const source = typeof lead.source === "object" ? first(lead.source.name, lead.source.type, "Dokumenterad källa") : first(lead.source_id, lead.source, "Källa saknas");
       const actions = actionButton("Visa", () => showLead(lead));
       actions.setAttribute("aria-label", "Visa " + company(lead));
-      row.append(cell(identity), cell(badge(asStatus(lead))), cell(source), cell(badge(lead.is_test ? "DEMO" : "PENDING", lead.is_test ? "Testdata" : "Kunddata")), cell(actions));
+      row.append(cell(identity), cell(badge(asStatus(lead))), cell(source), cell(badge(recordMode(lead) === "REAL" ? "APPROVED" : "PENDING", modeLabel(lead))), cell(actions));
       body.append(row);
     }
     text("lead-table-count", leads.length + " av " + list(data.leads).length + " leads");
@@ -254,9 +368,12 @@
     detail.replaceChildren();
     const compliance = lead.compliance || {};
     const items = [
-      ["Kontakt", lead.email], ["Status", statusLabel(asStatus(lead))], ["Datatyp", lead.is_test ? "Tydligt märkta testdata" : "Kunddata"],
+      ["Kontakt", lead.email], ["Status", statusLabel(asStatus(lead))], ["Datatyp", modeLabel(lead)],
       ["Källa", typeof lead.source === "object" ? first(lead.source.name, lead.source.type) : first(lead.source_id, lead.source)],
       ["Insamlat", date(first(lead.collected_at, lead.discovered_at, lead.created_at))], ["Källreferens", first(lead.source_url, lead.source_reference)],
+      ["Källunderlag", first(lead.research_evidence, lead.citations?.map((entry) => entry.evidence).filter(Boolean).join("\n"), lead.provenance?.evidence, lead.provenance?.source_url)],
+      ["Kvalitetsbedömning", first(lead.quality?.score, lead.research_quality?.score, lead.quality_score, lead.research?.quality_score)],
+      ["Kvalitetsunderlag", first(lead.quality?.factors, lead.research_quality?.reasons, lead.quality_reasons)],
       ["Behov", first(lead.need, lead.needs, lead.research?.need, lead.research?.summary)],
       ["Kontaktpolicy", first(compliance.status, compliance.approved ? "Godkänd granskning" : "Ej godkänd")],
       ["Laglig grund", first(compliance.lawful_basis, compliance.legal_basis, lead.lawful_basis)],
@@ -268,6 +385,12 @@
     }
     const actions = byId("lead-dialog-actions");
     actions.replaceChildren();
+    if (dataVersionReady() && canOperate() && !isKilled() && recordMode(lead) === "REAL" && !["UNSUBSCRIBED", "CANCELLED", "REJECTED"].includes(asStatus(lead))) {
+      actions.append(actionButton("Förbered nästa steg", async (button) => {
+        const result = await mutate(button, "/api/pipeline/leads/" + encodeURIComponent(lead.id) + "/advance", { idempotency_key: key("prepare-lead") }, "Nästa steg har köats. Separata serverkontroller styr alla externa åtgärder.");
+        if (result !== null) byId("lead-dialog").close();
+      }));
+    }
     if (canOperate() && asStatus(lead) !== "UNSUBSCRIBED") {
       actions.append(actionButton("Avregistrera kontakt", async (button) => {
         if (!window.confirm("Avregistrera kontakten och blockera framtida kontaktförsök?")) return;
@@ -328,7 +451,8 @@
     for (const payment of payments) {
       const row = el("tr");
       const title = el("div");
-      title.append(el("span", "cell-title", first(payment.reference, payment.id.slice(0, 8))), el("span", "cell-subtitle", payment.is_test || isDemo() ? "Simulerad betalning · testdata" : first(payment.customer_name, "Kundbegäran")));
+      const paymentLabel = payment.provider === "demo" ? "Simulerad betalning · aldrig verklig intäkt" : payment.livemode === true ? "Verklig leverantörsbetalning" : "Sandbox / ej verifierad som verklig betalning";
+      title.append(el("span", "cell-title", first(payment.reference, payment.id.slice(0, 8))), el("span", "cell-subtitle", paymentLabel));
       const actions = el("div", "table-action-group");
       const status = asStatus(payment);
       if (status === "DRAFT" || status === "PAYMENT_APPROVAL_REQUIRED") actions.append(paymentButton(payment, "approve"));
@@ -365,14 +489,30 @@
     }
     text("jobs-count", jobs.length + " registrerade jobb");
     byId("jobs-empty").hidden = jobs.length > 0;
-    const tasks = list(data.tasks).filter((task) => !["DONE", "COMPLETED"].includes(asStatus(task)));
+    const resolved = (task) => ["DONE", "COMPLETED", "RESOLVED", "SUPERSEDED"].includes(asStatus(task));
+    const filter = byId("tasks-filter").value;
+    const tasks = list(data.tasks).filter((task) => filter === "all" || (filter === "resolved" ? resolved(task) : !resolved(task)));
     const taskBox = byId("tasks-list");
     taskBox.replaceChildren();
-    text("tasks-count", tasks.length);
-    if (!tasks.length) taskBox.append(el("p", "empty-state", "Inga manuella uppgifter väntar."));
-    for (const task of tasks.slice(0, 6)) {
+    text("tasks-count", list(data.tasks).filter((task) => !resolved(task)).length);
+    if (!tasks.length) taskBox.append(el("p", "empty-state", filter === "pending" ? "Inga manuella uppgifter väntar." : "Inga uppgifter i den här gruppen."));
+    for (const task of tasks.slice(0, 30)) {
       const item = el("div", "task-item");
-      item.append(el("strong", "", first(task.title, task.kind, "Manuell uppgift")), el("p", "", first(task.description, task.reason, task.message, "Granska revisionsloggen för nästa steg.")));
+      const lead = list(data.leads).find((entry) => entry.id === task.lead_id);
+      const context = first(task.company, lead ? company(lead) : null, task.context_label, task.enquiry_id ? "Förfrågan " + task.enquiry_id.slice(0, 8) : task.id.slice(0, 8));
+      const header = el("div", "task-heading");
+      header.append(el("strong", "", first(task.title, task.kind, "Manuell uppgift")), badge(asStatus(task)));
+      item.append(header, el("p", "task-context", context + " · " + modeLabel(task)));
+      if (task.test_case !== undefined && task.test_case !== null) item.append(el("p", "", "Acceptanstestfall: " + (typeof task.test_case === "object" ? JSON.stringify(task.test_case) : task.test_case)));
+      if (task.enquiry_excerpt) item.append(el("p", "task-excerpt", task.enquiry_excerpt));
+      item.append(el("p", "", first(task.description, task.reason, task.message, task.instructions, "Granska revisionsloggen för nästa steg.")));
+      if (!resolved(task) && dataVersionReady() && !taskNeedsDedicatedAction(task)) item.append(actionButton("Markera granskad", async (button) => {
+        const reason = window.prompt("Beskriv vad du har granskat. Detta godkänner ingen betalning, kontakt eller leverans.", "");
+        if (reason === null) return;
+        if (reason.trim().length < 12) { toast("Ange en granskningsanteckning med minst 12 tecken.", true); return; }
+        await mutate(button, "/api/tasks/" + encodeURIComponent(task.id) + "/resolve", { reason: reason.trim() }, "Uppgiften är registrerad som granskad. Inga externa åtgärder har godkänts.");
+      }, { disabled: !canOperate() }));
+      else if (!resolved(task) && taskNeedsDedicatedAction(task)) item.append(el("p", "", "Separat granskningssteg krävs. Använd betalningsbeslutet, kontaktgranskningen eller jobbets avstämning; en vanlig kvittens ger ingen behörighet."));
       taskBox.append(item);
     }
     const reports = list(data.reports).sort((a, b) => number(b.created_at) - number(a.created_at));
@@ -463,10 +603,12 @@
     byId("run-job-button").disabled = !canOperate() || isKilled();
     byId("add-lead-button").disabled = !canOperate();
     byId("kill-switch-button").disabled = !isAdmin();
+    for (const fieldset of document.querySelectorAll("[data-admin-only]")) fieldset.disabled = !isAdmin() || !dataVersionReady();
+    byId("import-lead-save").disabled = !isAdmin() || !dataVersionReady();
   }
   function render(data) {
     state.data = data;
-    renderMetrics(data); renderBudget(data); renderLeads(data); renderApprovals(data); renderPayments(data); renderJobs(data); renderSecurity(data); applyPermissions();
+    renderMetrics(data); renderBudget(data); renderLeads(data); renderApprovals(data); renderPayments(data); renderJobs(data); renderSecurity(data); renderPreparation(data); applyPermissions();
     text("last-updated", "Uppdaterad " + new Intl.DateTimeFormat("sv-SE", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date()));
   }
   async function refresh() {
@@ -507,6 +649,7 @@
     await mutate(byId("kill-switch-button"), "/api/kill-switch", { enabled, reason: enabled ? "Administratören aktiverade nödstopp i kontrollpanelen" : "Administratören hävde nödstopp efter granskning" }, enabled ? "Nödstoppet är aktiverat." : "Nödstoppet är hävt. Pausade jobb kräver separata beslut.");
   });
   byId("lead-search").addEventListener("input", () => { if (state.data) renderLeads(state.data); });
+  byId("tasks-filter").addEventListener("change", () => { if (state.data) renderJobs(state.data); });
   byId("add-lead-button").addEventListener("click", () => { byId("new-lead-error").hidden = true; byId("new-lead-dialog").showModal(); byId("new-lead-company").focus(); });
   byId("new-lead-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -521,6 +664,81 @@
       await refresh();
     } catch (error) { text("new-lead-error", error.message); byId("new-lead-error").hidden = false; }
     finally { setBusy(button, false); }
+  });
+  for (const form of document.querySelectorAll(".config-form")) form.addEventListener("input", () => { form.dataset.dirty = "true"; });
+  async function saveConfig(formId, buttonId, path, payload, message) {
+    const button = byId(buttonId);
+    setBusy(button, true);
+    try {
+      const result = await api(path, { method: "POST", body: payload });
+      delete byId(formId).dataset.dirty;
+      toast(message);
+      await refresh();
+      return result;
+    } catch (error) { showError(error.message); toast(error.message, true); return false; }
+    finally { setBusy(button, false); if (state.data) applyPermissions(); }
+  }
+  byId("ai-config-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!isAdmin() || !dataVersionReady()) return;
+    const existing = state.data.v11.ai?.config || {};
+    const model = byId("ai-model").value.trim();
+    await saveConfig("ai-config-form", "ai-config-save", "/api/ai/config", {
+      model, approved_models: [model], enabled: false,
+      max_output_tokens: Number(byId("ai-max-tokens").value),
+      max_input_chars: first(existing.max_input_chars, 12000),
+      timeout_seconds: Number(byId("ai-timeout").value), max_retries: Number(byId("ai-retries").value),
+      reservation_usd_minor: first(existing.reservation_usd_minor, 10),
+      per_call_limit_sek_minor: Math.round(Number(byId("ai-call-sek").value) * 100),
+      prompt_usd_per_million: String(first(existing.prompt_usd_per_million, "1.00")),
+      completion_usd_per_million: String(first(existing.completion_usd_per_million, "5.00")),
+      reason: byId("ai-reason").value.trim()
+    }, "Modellinställningar sparade. Betalda anrop förblir avstängda.");
+  });
+  byId("pipeline-config-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!isAdmin() || !dataVersionReady()) return;
+    await saveConfig("pipeline-config-form", "pipeline-config-save", "/api/pipeline/config", {
+      enabled: byId("pipeline-enabled").checked,
+      source_ids: byId("pipeline-sources").value.split(",").map((value) => value.trim()).filter(Boolean),
+      interval_seconds: Number(byId("pipeline-interval").value) * 60,
+      max_leads_per_tick: Number(byId("pipeline-max-leads").value),
+      follow_up_delay_seconds: Number(byId("pipeline-followup").value) * 86400,
+      billing_stage: first(state.data.v11.pipeline?.billing_stage, "after_delivery"),
+      reason: byId("pipeline-reason").value.trim()
+    }, "Förberedelseschemat är sparat. Inget livegodkännande har lämnats.");
+  });
+  byId("source-config-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!isAdmin() || !dataVersionReady() || !byId("source-reviewed").checked) return;
+    const sourceId = byId("source-id").value.trim();
+    const saved = await saveConfig("source-config-form", "source-config-save", "/api/research/sources/" + encodeURIComponent(sourceId), {
+      name: byId("source-name").value.trim(), kind: "upload", url: byId("source-url").value.trim(),
+      approved: true, license_reviewed: true, legal_review_reference: byId("source-reference").value.trim(),
+      fetch_enabled: false, minimum_quality: 80, minimum_interval_seconds: 3600,
+      cost_minor: 0, cost_evidence: byId("source-cost-evidence").value.trim(), data_mode: "REAL"
+    }, "Källgranskningen är registrerad för manuell katalogimport. Ingen nätverkshämtning har aktiverats.");
+    if (saved) byId("source-config-form").reset();
+  });
+  byId("import-lead-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!isAdmin() || !dataVersionReady()) return;
+    byId("import-lead-error").hidden = true;
+    const sourceId = byId("import-source-id").value;
+    const saved = await saveConfig("import-lead-form", "import-lead-save", "/api/research/sources/" + encodeURIComponent(sourceId) + "/ingest", {
+      idempotency_key: key("source-import"), records: [{ company: byId("import-company").value.trim(), email: byId("import-email").value.trim(),
+        domain: byId("import-domain").value.trim(), source_url: byId("import-reference").value.trim(), evidence: byId("import-evidence").value.trim(),
+        entity_type: byId("import-entity").value, address_type: byId("import-address").value }]
+    }, "Källunderlaget har granskats av servern. Se importresultat och revisionslogg.");
+    if (saved?.accepted === 0 && list(saved.rejected).length) {
+      const reasons = { quality_below_threshold: "Källunderlaget uppfyller inte kvalitetskravet.", demo_real_identity_collision: "Samma identitet finns redan i en annan datatyp. Demodata får inte omvandlas till verkliga leads." };
+      text("import-lead-error", list(saved.rejected).map((entry) => reasons[entry.reason] || "Importen kräver granskning: " + entry.reason).join(" "));
+      byId("import-lead-error").hidden = false;
+      toast("Ingen ny lead importerades. Granska källunderlaget.", true);
+    } else if (saved) {
+      byId("import-lead-dialog").close();
+      toast("Importerade uppgifter: " + first(saved.accepted, 1) + ". Dubbletter: " + first(saved.duplicates, 0) + ". Ingen kundkontakt har tagits.");
+    }
   });
   for (const link of document.querySelectorAll(".nav-link")) link.addEventListener("click", () => {
     for (const other of document.querySelectorAll(".nav-link")) { other.classList.remove("active"); other.removeAttribute("aria-current"); }

@@ -196,14 +196,17 @@ customer installation additionally requires an agreement and explicit access
 permission. Live delivery, inference, email deliverability, provider fees and
 regulatory compliance cannot be proven by the simulated customer journey.
 
-The current release does not install or verify the service in a customer's
-production environment. A local `TEST_VERIFIED` report leaves a live deal in
-`DELIVERY_IN_PROGRESS` with a manual task and blocks its downstream production
-payment gate. A demo report is never promoted into real delivery evidence.
-Keep demo business records out of a future live reporting database; use reviewed
-data migration/retention procedures rather than treating simulated income as
-confirmed business revenue.
+The release does not install or verify the service in a customer's production
+environment. For legacy delivery-first contracts, a local `TEST_VERIFIED` report
+leaves a live deal in `DELIVERY_IN_PROGRESS` with a manual task and blocks its
+downstream production payment gate. A demo report is never real delivery
+evidence. v1.1 separately supports new, explicitly accepted prepayment terms;
+the exact request still requires manual approval and the independent
+`JARVIS_ALLOW_LIVE_PAYMENTS=false` capability remains disabled by default.
+See [the v1.1 guide](jarvis-lite-v1.1.md) before upgrading an existing service.
 
-Financial dashboard totals select simulated payments in DEMO and live provider
-payments in LIVE. Changing mode never relabels a simulated receipt as real
-income. A customer payment confirmation is still not proof of a bank payout.
+The v1.1 dashboard separates REAL, DEMO and unclassified legacy records without
+deleting them. Real confirmed revenue requires sourced real customers and
+matching signed live-provider evidence. Demo and Stripe-test receipts never
+become real income because mode changes. A customer payment confirmation is
+still not proof of a bank payout.

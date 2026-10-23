@@ -1,4 +1,4 @@
-# Jarvis Lite v1 · powered by Ignitic
+# Jarvis Lite v1.1 · powered by Ignitic
 
 An internal business-operator console in one FastAPI application with PostgreSQL,
 a database-backed queue and six logical agent roles. The original Ignitic stack
@@ -6,6 +6,14 @@ and its deployment files remain available independently.
 
 **DEMO is the default. No live providers, real customer messages, payment requests,
 customer installations, subscriptions or trading actions are enabled by setup.**
+
+Version 1.1 adds configurable bounded AI tasks, explicitly approved research
+sources, separate contact authorization, provider-event handling and a persistent
+preparation pipeline. New capabilities are disabled when their environment flags
+are absent. An existing Render installation keeps its PostgreSQL data, encrypted
+credentials, operators, sessions and deployment environment. Do not run local
+`init-demo` against production or recreate a production database/key to upgrade.
+Follow the [v1.1 review and upgrade guide](../../docs/jarvis-lite-v1.1.md).
 
 ## Start
 
@@ -105,16 +113,28 @@ unverified planning rate of 12 SEK/USD. Current provider pricing, FX and Render
 schema/runtime acceptance remain deployment prerequisites, not verified quotes.
 
 Live mode additionally requires a runtime capability, explicit admin approval,
-a reviewed legal contact policy, action-specific evidence and a clean database
-without demo business records. No setup command enables it. Provider keys alone
-cannot grant an agent authority.
+a reviewed legal contact policy and action-specific evidence. v1.1 preserves
+existing demo records and separately classifies them; a demo or unclassified
+record cannot authorize real customer actions. Live contact and live payments
+have independent disabled-by-default capabilities and their own approval gates.
+No setup command enables them. Provider keys alone cannot grant agent authority.
+Optional automatic compliance is limited to explicitly reviewed source IDs,
+lawful basis, current source versions, cited quality evidence and generic
+legal-person company inboxes under a current contact approval. Other contacts
+remain manual. Canonical reviewed templates support bounded personalization;
+AI suggestions do not automatically become approved sends.
 
-Remaining live integrations are deliberately explicit: research currently uses
-approved imported/customer evidence rather than unattended web prospecting;
-inbound email needs a signing gateway; Stripe supports test credentials only;
-customer inbox/CRM installation and production delivery require a separately
-authorized adapter and real verification. Local tests never unlock LIVE delivery
-payments. The software does not make B2B outreach lawful by itself. Review Swedish
+Remaining live integrations are deliberately explicit: research uses reviewed
+uploads and exact approved HTTPS JSON feeds, not unrestricted web prospecting;
+inbound/delivery email events need an authenticated signing gateway. The Stripe
+adapter supports test accounts and separately gated production accounts; live
+requests require `JARVIS_ALLOW_LIVE_PAYMENTS=true`, a sourced real customer,
+current LIVE authority and exact manual payment approval. It is not activated
+by this release. Provider fees stay reserved until actual reconciliation.
+Customer inbox/CRM installation and production delivery require a separately
+authorized adapter and real verification. Local tests do not prove production
+delivery or change legacy delivery-first contracts. The software does not make
+B2B outreach lawful by itself. Review Swedish
 and EU rules, consent/contact classification, retention, data subject requests,
 provider agreements and templates before any live customer contact.
 
