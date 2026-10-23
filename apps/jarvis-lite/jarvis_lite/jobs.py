@@ -1,8 +1,8 @@
 """Durable, bounded logical-agent jobs backed by the same transactional store.
 
-No queue handler is an arbitrary tool runner. Current handlers only inspect
-imported records, prepare drafts/reports, or run the sandbox customer journey.
-Actual provider effects must still pass the central policy immediately before
+No queue handler is an arbitrary tool runner. Fixed preparation/research handlers
+and the sandbox journey reuse the canonical workflows and provider adapters.
+Provider effects must pass the current central policy immediately before
 execution. Leases are committed before handling a job and fenced by a random
 token plus the persistent safety epoch.
 """
@@ -20,7 +20,8 @@ from . import policy
 from .policy import PolicyError
 
 
-KINDS = frozenset({"demo_journey", "research", "qualify", "follow_up", "daily_report"})
+KINDS = frozenset({"demo_journey", "research", "qualify", "follow_up", "daily_report",
+                   "pipeline_advance", "source_research"})
 ACTIVE = frozenset({"queued", "leased"})
 MAX_ATTEMPTS = 3
 LEASE_SECONDS = 90
@@ -183,8 +184,9 @@ def claim(db, *, lease_seconds: float = LEASE_SECONDS) -> dict | None:
                 _save(tx, job)
                 _task(tx, job, "The job exhausted its bounded attempts after interrupted workers")
                 continue
-            # Current handlers have no uncontrolled external effects. Their work
-            # and job result commit atomically, so an expired lease is safe to retry.
+            # Local work commits with the result. Provider handlers additionally
+            # persist their idempotent outbox before dispatch: an expired lease
+            # must resolve/quarantine that intent, never blindly send again.
             job.update(status="leased", attempts=job["attempts"] + 1,
                        lease_token=secrets.token_hex(16), lease_until=tx.now + lease_seconds)
             claimed = _save(tx, job)
@@ -198,6 +200,17 @@ def _dispatch(tx, job: dict) -> dict:
     policy.guard(tx, "job", actor=actor)
     payload = job["payload"]
     key = "job:" + job["id"]
+    if job["kind"] in {"pipeline_advance", "source_research"}:
+        from . import pipeline
+        config = pipeline.status(tx)
+        manual_preparation = job["kind"] == "pipeline_advance" and payload.get("manual_preparation") is True
+        if (payload.get("pipeline_revision") != config["revision"]
+                or (not manual_preparation and (not config["enabled"] or config["requires_reauthorization"]))):
+            raise PolicyError("pipeline_authority_changed", "Review the preparation scheduler before resuming old work")
+        if job["kind"] == "pipeline_advance":
+            return pipeline.advance(tx, payload["lead_id"], actor=actor, key=key)
+        from . import research
+        return research.fetch_source(tx, payload["source_id"], actor=actor, key=key)
     if job["kind"] == "demo_journey":
         from . import workflow
         return workflow.run_demo(tx, actor=actor, key=key)
@@ -214,18 +227,19 @@ def _dispatch(tx, job: dict) -> dict:
                                      "report_date": payload.get("report_date"), "timezone": SCHEDULE_TIMEZONE,
                                      "is_test": policy.get_settings(tx).get("mode") == "DEMO"})
     if job["kind"] == "follow_up":
-        lead = tx.get("lead", payload["lead_id"])
-        if not lead:
-            raise PolicyError("lead_not_found", "Lead no longer exists", status=404)
-        if lead.get("state") in {"UNSUBSCRIBED", "REJECTED", "CANCELLED", "COMPLETED"}:
-            return {"skipped": True, "reason": "Lead is not eligible for a follow-up"}
-        # A follow-up task is a draft only. It cannot invoke email or any provider.
-        return tx.create("manual_task", {
-            "type": "follow_up", "status": "PENDING", "role": "Sales",
-            "lead_id": lead["id"], "title": "Review a follow-up draft",
-            "draft": "Follow up on the approved enquiry-assistant scope; do not promise outcomes or send without contact checks.",
-            "created_at": tx.now, "requires_compliance": True,
-        })
+        from . import pipeline
+        configuration = pipeline.status(tx)
+        allow_dispatch = payload.get("allow_dispatch") is True
+        if allow_dispatch and (not configuration["enabled"] or configuration["requires_reauthorization"]
+                or payload.get("pipeline_revision") != configuration["revision"]):
+            raise PolicyError("pipeline_authority_changed", "Review follow-up dispatch authority before resuming old work")
+        if allow_dispatch:
+            lead = tx.get("lead", payload["lead_id"], {})
+            if (type(payload.get("scheduled_for")) not in {int, float}
+                    or lead.get("follow_up_at") != payload.get("scheduled_for")):
+                return {"skipped": True, "reason": "The follow-up was rescheduled or cancelled"}
+        return pipeline.follow_up(tx, payload["lead_id"], actor=actor, key=key,
+                                  allow_dispatch=allow_dispatch)
     raise PolicyError("unknown_job_kind", "Unrecognized stored job kind", status=422)
 
 
@@ -269,7 +283,20 @@ def run_once(db) -> dict | None:
                 job.update(status="paused", paused_reason="kill_switch", lease_token=None, lease_until=None)
                 tx.audit("system", "job.paused", {"job_id": job["id"], "reason": "kill_switch"})
                 return _save(tx, job)
+            tx.execution_fence = (job["id"], claimed["lease_token"])
             result = _dispatch(tx, job)
+            # Provider outbox checkpoints can release the lock. Do not overwrite
+            # a stop/reconfiguration that fenced this lease during dispatch.
+            current = _job(tx, claimed["id"])
+            settings = policy.get_settings(tx)
+            if (current["status"] != "leased" or current.get("lease_token") != claimed["lease_token"]
+                    or settings.get("kill_switch") or current["safety_epoch"] != _epoch(settings)):
+                return current
+            if isinstance(result, dict) and result.get("status") == "UNCERTAIN":
+                job.update(status="uncertain", result=result, lease_token=None, lease_until=None,
+                           paused_reason="provider_outcome_requires_review", error_code="provider_uncertain")
+                _task(tx, job, "Provider outcome is unknown; automatic retries are forbidden")
+                return _save(tx, job)
             job.update(status="completed", result=result, lease_token=None, lease_until=None,
                        completed_at=tx.now, error_code=None)
             saved = _save(tx, job)
@@ -305,9 +332,20 @@ def schedule_due(tx) -> list[dict]:
                 scheduled.append(enqueue(tx, "qualify", {"lead_id": lead["id"]},
                                          idempotency_key="scheduled-qualify:" + lead["id"]))
         due = lead.get("follow_up_at")
-        if isinstance(due, (int, float)) and due <= tx.now and lead.get("state") in {"CONTACTED", "REPLIED", "NEGOTIATING"}:
-            scheduled.append(enqueue(tx, "follow_up", {"lead_id": lead["id"]},
-                                     idempotency_key=f"follow-up:{lead['id']}:{int(due)}"))
+        if isinstance(due, (int, float)) and due <= tx.now and lead.get("state") in {"CONTACTED", "NO_RESPONSE", "REPLIED", "NEGOTIATING", "PROPOSAL_SENT"}:
+            from . import pipeline
+            configuration = pipeline.status(tx)
+            allow_dispatch = bool(configuration["enabled"] and not configuration["requires_reauthorization"])
+            # Preserve v1.0 payload fingerprints for existing review-only jobs.
+            payload = {"lead_id": lead["id"]}
+            key = f"follow-up:{lead['id']}:{int(due)}"
+            if allow_dispatch:
+                payload.update(allow_dispatch=True, pipeline_revision=configuration["revision"], scheduled_for=due)
+                from .store import fingerprint
+                key = "v11-follow-up:" + fingerprint({"lead_id": lead["id"], "due": due, "revision": configuration["revision"]})
+            scheduled.append(enqueue(tx, "follow_up", payload, idempotency_key=key))
+    from . import pipeline
+    scheduled.extend(pipeline.schedule_due(tx))
     return scheduled
 
 

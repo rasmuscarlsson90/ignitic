@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
-from . import auth, budget, connectors, jobs, policy, workflow
+from . import ai, auth, budget, connectors, jobs, policy, workflow, upgrade, research, outreach, pipeline
 from .policy import PolicyError
 from .store import Database
 
@@ -159,7 +159,7 @@ def create_app(database=None, *, worker_enabled=None):
         if database is None:
             db.close()
 
-    app = FastAPI(title="Jarvis Lite · powered by Ignitic", version="1.0.0", lifespan=lifespan,
+    app = FastAPI(title="Jarvis Lite · powered by Ignitic", version="1.1.0", lifespan=lifespan,
                   docs_url=None if production else "/docs")
     app.state.db = db
 
@@ -205,7 +205,7 @@ def create_app(database=None, *, worker_enabled=None):
     def health():
         with db.engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        return {"status": "healthy", "service": "jarvis-lite", "version": "1.0.0"}
+        return {"status": "healthy", "service": "jarvis-lite", "version": "1.1.0"}
 
     @app.post("/api/auth/login")
     def login(body: Login, request: Request):
@@ -255,12 +255,19 @@ def create_app(database=None, *, worker_enabled=None):
                 "outstanding_minor": sum(p["total_minor"] for p in financial_payments if p["status"] in {"REQUESTED", "INITIATED"})}
             financial = budget.summary(tx)
             metrics["gross_margin_minor"] = metrics["confirmed_revenue_minor"] - financial["actual_sek_minor"]
+            separated = upgrade.metrics(tx)
+            metrics.update(confirmed_revenue_minor=separated["real_confirmed_revenue_minor"],
+                           paying_customers=separated["real_paying_customers"],
+                           outstanding_minor=separated["real_outstanding_minor"])
+            metrics["gross_margin_minor"] = metrics["confirmed_revenue_minor"] - financial["actual_sek_minor"]
             return {"user": user, "mode": settings["mode"], "kill_switch": settings["kill_switch"],
                 "policy": settings, "metrics": metrics, "budget": financial,
                 "leads": leads, "jobs": tx.list("job"), "payments": payments,
                 "approvals": [p for p in payments if p["status"] in {"DRAFT", "APPROVED"}],
                 "audit": tx.audits(), "services": workflow.service_registry(tx),
-                "tasks": tx.list("manual_task"), "reports": tx.list("report"),
+                "tasks": upgrade.hydrate_tasks(tx), "reports": tx.list("report"),
+                "v11": {"ai": ai.status(tx), "research_sources": research.sources(tx),
+                        "outreach": outreach.status(tx), "pipeline": pipeline.status(tx), "metrics": separated},
                 "connections": {name: bool(tx.get("secret", name)) for name in
                     ("BREVO_API_KEY", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "OPENROUTER_API_KEY")},
                 "messages": tx.list("email_message"), "deliveries": tx.list("delivery")}
@@ -332,7 +339,9 @@ def create_app(database=None, *, worker_enabled=None):
     def payment_draft(lead_id: str, body: Key, request: Request):
         with db.transaction() as tx:
             actor = who(tx, request, True)
-            lead = workflow.payment_approval_required(tx, lead_id, actor=actor, key=body.idempotency_key + ":gate")
+            current = tx.get("lead", lead_id, {})
+            gate = workflow.prepare_payment_gate if current.get("state") == "ACCEPTED" else workflow.payment_approval_required
+            lead = gate(tx, lead_id, actor=actor, key=body.idempotency_key + ":gate")
             proposal = tx.get("proposal", lead["proposal_id"])
             return connectors.create_payment_draft(tx, lead_id=lead_id, proposal_id=proposal["id"],
                 amount_minor=proposal["amount_minor"], vat_minor=proposal["vat_minor"],
@@ -347,7 +356,7 @@ def create_app(database=None, *, worker_enabled=None):
     @app.post("/api/agents/tasks")
     def agent_task(body: AgentTask, request: Request):
         with db.transaction() as tx:
-            return connectors.llm_task(tx, **body.model_dump(), actor=who(tx, request, True))
+            return ai.task(tx, **body.model_dump(), actor=who(tx, request, True))
 
     @app.post("/api/payments/{payment_id}/request")
     def request_payment(payment_id: str, body: Key, request: Request):
@@ -392,7 +401,9 @@ def create_app(database=None, *, worker_enabled=None):
     @app.post("/api/secrets/{name}")
     def change_secret(name: str, body: Secret, request: Request):
         with db.transaction() as tx:
-            policy.set_secret(tx, name, body.value, who(tx, request, True, True))
+            actor = who(tx, request, True, True)
+            policy.set_secret(tx, name, body.value, actor)
+            policy.update_settings(tx, {}, actor)
             return {"name": name, "configured": True}
 
     @app.delete("/api/secrets/{name}")
@@ -400,6 +411,7 @@ def create_app(database=None, *, worker_enabled=None):
         with db.transaction() as tx:
             actor = who(tx, request, True, True)
             tx.delete("secret", name)
+            policy.update_settings(tx, {}, actor)
             tx.audit(actor, "secret_removed", {"name": name})
             return {"name": name, "configured": False}
 
@@ -446,8 +458,6 @@ def create_app(database=None, *, worker_enabled=None):
             if os.getenv("JARVIS_ALLOW_LIVE", "false").lower() != "true":
                 raise PolicyError("live_disabled", "Live mode is disabled by the deployment; separate authorization is required", 403)
             settings = policy.get_settings(tx)
-            if any(lead.get("is_test") for lead in tx.list("lead")) or any(p.get("provider") == "demo" for p in tx.list("payment")):
-                raise PolicyError("demo_data_present", "Use a clean, separately reviewed live database; demo business records cannot be relabeled", 409)
             if not settings.get("approved_senders"):
                 raise PolicyError("sender_review", "Review sender identity and SPF/DKIM/DMARC evidence first", 403)
             settings.update(mode="LIVE", live_approved=True, legal_reviewed=True,
@@ -456,7 +466,11 @@ def create_app(database=None, *, worker_enabled=None):
             tx.put("settings", "global", settings)
             jobs.pause_for_kill(tx, actor=actor)
             tx.audit(actor, "live.manually_approved", {"reason": body.reason, "legal_review_reference": body.legal_review_reference})
-            return {"mode": "LIVE"}
+            return {"mode": "LIVE", "customer_contact_enabled": False,
+                    "next_step": "Run current outreach checks and obtain separate legal/customer-contact approval"}
+
+    from .api_v11 import register_routes
+    register_routes(app, db, who)
 
     @app.post("/api/leads/{lead_id}/{action}")
     def lead_action(lead_id: str, action: Literal["research", "qualify", "compliance", "proposal", "accept", "deliver"], body: Data, request: Request):

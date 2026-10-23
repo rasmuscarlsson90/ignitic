@@ -61,6 +61,9 @@ def _limits(tx):
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise PolicyError("invalid_budget_policy", f"Invalid server budget limit: {name}", 503)
         result[name] = value
+    # Preserve stored policy/history while enforcing the current owner mandate.
+    result["total"] = min(result["total"], 200000)
+    result["tools_30d"] = min(result["tools_30d"], 50000)
     return result
 
 

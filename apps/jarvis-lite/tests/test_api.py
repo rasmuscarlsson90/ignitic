@@ -93,10 +93,11 @@ def test_full_customer_journey_needs_human_approval(running):
     assert client.post(path + "/simulate-paid", headers=admin, json={"event_id": "signed-demo-event"}).status_code == 200
     result = client.get("/api/dashboard").json()
     assert result["leads"][0]["state"] == "COMPLETED"
-    assert result["metrics"]["confirmed_revenue_minor"] == payment["amount_minor"]
+    assert result["metrics"]["confirmed_revenue_minor"] == 0
+    assert result["metrics"]["simulated_revenue_minor"] == payment["amount_minor"]
     assert result["metrics"]["contacts"] == result["metrics"]["proposals_sent"] == 1
     assert result["payments"][0]["payout_status"] == "NOT_INITIATED"
-    assert result["mode"] == "DEMO" and result["metrics"]["paying_customers"] == 1
+    assert result["mode"] == "DEMO" and result["metrics"]["paying_customers"] == 0
 
 
 def test_kill_switch_persists_and_requires_explicit_resume(running):

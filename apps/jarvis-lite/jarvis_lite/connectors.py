@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import re
 from decimal import Decimal, ROUND_CEILING
 from typing import Any
@@ -35,7 +36,7 @@ def _required(tx, kind, record_id):
 
 
 def _secret(tx, name):
-    value = policy.get_secret(tx, name)
+    value = policy.get_secret(tx, name) or os.getenv(name)
     if not value:
         _error("secret_missing", f"Configure {name} securely before using this provider")
     return value
@@ -148,13 +149,13 @@ class BrevoAdapter:
     def __init__(self, api_key, *, transport=None):
         self.api_key, self.transport = api_key, transport
 
-    def send(self, *, sender, recipient, subject, body, idempotency_key):
+    def send(self, *, sender, recipient, subject, body, idempotency_key, headers=None):
         with httpx.Client(timeout=15, follow_redirects=False, transport=self.transport) as client:
             response = client.post("https://api.brevo.com/v3/smtp/email", headers={
                 "api-key": self.api_key, "idempotencyKey": idempotency_key,
             }, json={"sender": {"email": sender}, "to": [{"email": recipient}],
                      "subject": subject, "textContent": body,
-                     "tags": ["jarvis-lite"]})
+                     "tags": ["jarvis-lite"], **({"headers": headers} if headers else {})})
         if response.status_code not in (200, 201, 202):
             _error("email_provider_failure", "Email provider did not confirm acceptance", 502)
         result = response.json()
@@ -173,8 +174,10 @@ class StripeAdapter:
         parsed = urlparse(return_origin)
         if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
             _error("return_origin_invalid", "Payment return origin must be an approved HTTPS origin")
-        if not self.api_key.startswith(("sk_test_", "rk_test_")):
-            _error("stripe_test_only", "This release supports Stripe test credentials only")
+        live_key = self.api_key.startswith(("sk_live_", "rk_live_"))
+        if not self.api_key.startswith(("sk_test_", "rk_test_")) and not (
+                live_key and os.getenv("JARVIS_ALLOW_LIVE_PAYMENTS", "false").lower() == "true"):
+            _error("stripe_test_only", "Live Stripe credentials require separate payment capability")
         with httpx.Client(timeout=15, follow_redirects=False, transport=self.transport) as client:
             response = client.post("https://api.stripe.com/v1/checkout/sessions", headers={
                 "Authorization": "Bearer " + self.api_key,
@@ -193,9 +196,11 @@ class StripeAdapter:
         if response.status_code not in (200, 201):
             _error("payment_provider_failure", "Payment provider did not accept the request", 502)
         result = response.json()
+        if result.get("livemode", False) is not live_key:
+            _error("payment_provider_failure", "Stripe session mode does not match the configured account", 502)
         if not result.get("id") or not str(result.get("url", "")).startswith("https://checkout.stripe.com/"):
             _error("payment_provider_failure", "Payment provider returned an invalid checkout session", 502)
-        return {"provider_reference": result["id"], "url": result["url"]}
+        return {"provider_reference": result["id"], "url": result["url"], "livemode": live_key}
 
 
 def unsubscribe(tx, *, email, reason="recipient request", actor="recipient"):
@@ -240,12 +245,12 @@ def _contact_checks(tx, lead, purpose, ignore_message_id=None):
             _error("demo_recipient_only", "Demo sends require an explicitly approved test recipient")
     messages = [m for m in tx.list("email_message")
                 if m.get("id") != ignore_message_id and m.get("recipient") == recipient
-                and m.get("status") in ("SENT", "DELIVERED", "UNKNOWN")]
+                and m.get("status") in ("SENT", "DELIVERED", "UNKNOWN", "DEFERRED", "SOFT_BOUNCED", "HARD_BOUNCED", "COMPLAINT")]
     if purpose == "contact" and any(m.get("purpose") == "contact" for m in messages):
         _error("contact_duplicate", "Initial contact was already sent to this recipient")
     sent_today = [m for m in tx.list("email_message")
                   if m.get("id") != ignore_message_id and m.get("created_at", 0) >= tx.now - 86400
-                  and m.get("status") in ("SENT", "DELIVERED", "BOUNCED", "UNKNOWN")]
+                  and m.get("status") in ("SENT", "DELIVERED", "BOUNCED", "UNKNOWN", "DEFERRED", "SOFT_BOUNCED", "HARD_BOUNCED", "COMPLAINT")]
     if len(sent_today) >= int(settings.get("email_daily_limit", 10)):
         _error("email_rate_limit", "The daily sending limit has been reached")
     rolling = [m for m in messages if m.get("created_at", 0) >= tx.now - 30 * 86400]
@@ -278,7 +283,7 @@ def send_email(tx, *, lead_id, subject, body, idempotency_key, purpose="contact"
         return previous
     lead = _lead(tx, lead_id)
     expected = {"contact": {"READY_TO_CONTACT"}, "proposal": {"PROPOSAL_READY"},
-                "followup": {"CONTACTED", "NO_RESPONSE"}, "reply": {"REPLIED", "NEGOTIATING"}}
+                "followup": {"CONTACTED", "NO_RESPONSE", "PROPOSAL_SENT"}, "reply": {"REPLIED", "NEGOTIATING"}}
     if lead.get("state") not in expected[purpose]:
         _error("contact_state_invalid", "The workflow is not ready for this message")
     recipient = _contact_checks(tx, lead, purpose)
@@ -294,9 +299,18 @@ def send_email(tx, *, lead_id, subject, body, idempotency_key, purpose="contact"
         if not all(config.get(name) for name in ("approved", "spf", "dkim", "dmarc", "legal_review")):
             _error("sender_unverified", "A reviewed sender with SPF, DKIM and DMARC is required")
         template_fingerprint = hashlib.sha256((subject + "\n" + body).encode()).hexdigest()
-        if purpose != "proposal" and template_fingerprint not in config.get("approved_templates", []):
+        from . import workflow
+        template_id = "followup-standard-v1" if purpose == "followup" else "contact-standard-v1"
+        canonical_reviewed = (purpose in {"contact", "followup"}
+            and template_id in tx.get("outreach_config", "global", {}).get("approved_template_ids", [])
+            and workflow.contact_message(lead, followup=purpose == "followup") == {"subject": subject, "body": body})
+        if purpose != "proposal" and template_fingerprint not in config.get("approved_templates", []) and not canonical_reviewed:
             _error("email_template_unreviewed", "A legal reviewer must approve this exact outbound template")
         real = adapter or BrevoAdapter(_secret(tx, "BREVO_API_KEY"))
+        options = {}
+        if isinstance(real, BrevoAdapter):
+            from . import outreach
+            options["headers"] = outreach.unsubscribe_headers(tx, lead)
         reservation = budget.reserve(tx, vendor="brevo", workflow_id=lead_id,
                                      amount_minor=int(config.get("reservation_minor", 50)), currency="SEK",
                                      category="tools", idempotency_key="email:" + idempotency_key, actor=actor)
@@ -314,7 +328,11 @@ def send_email(tx, *, lead_id, subject, body, idempotency_key, purpose="contact"
         current_lead = _lead(tx, lead_id)
         if current_lead.get("state") not in expected[purpose]:
             _error("contact_state_invalid", "Contact authority changed after reservation")
-        _contact_checks(tx, current_lead, purpose, ignore_message_id=pending["id"])
+        if _contact_checks(tx, current_lead, purpose, ignore_message_id=pending["id"]) != recipient:
+            _error("contact_identity_changed", "Recipient identity changed after reservation")
+        policy.guard(tx, "proposal" if purpose == "proposal" else "email", actor=actor, lead=current_lead)
+        if canonical_reviewed and workflow.contact_message(current_lead, followup=purpose == "followup") != {"subject": subject, "body": body}:
+            _error("contact_template_changed", "Contact template input changed after reservation")
         if tx.get("connector_config", "email", {}) != config:
             _error("sender_config_changed", "Sender approval changed after reservation")
         if purpose == "proposal":
@@ -323,7 +341,7 @@ def send_email(tx, *, lead_id, subject, body, idempotency_key, purpose="contact"
                 _error("proposal_template_required", "The approved proposal changed before dispatch")
         try:
             result = real.send(sender=sender, recipient=recipient, subject=subject, body=body,
-                               idempotency_key=idempotency_key)
+                               idempotency_key=idempotency_key, **options)
         except (httpx.HTTPError, PolicyError, ValueError):
             pending["manual_reconciliation_required"] = True
             pending["intent_id"] = intent["id"]
@@ -376,6 +394,8 @@ def receive_email(tx, *, payload, signature, timestamp, event_id, actor="provide
     event_type = payload.get("type", "reply")
     if event_type not in ("reply", "unsubscribe", "delivered", "bounced"):
         _error("email_event_invalid", "Unsupported inbound event", 422)
+    if payload.get("provider") != "demo" and event_type in {"delivered", "bounced"}:
+        _error("delivery_gateway_required", "Delivery reports must use the signed message-bound delivery gateway", 422)
     lead = _lead(tx, payload.get("lead_id"))
     if _email(payload.get("from", "")) != _email(lead["email"]):
         _error("email_event_mismatch", "The inbound sender does not match this contact")
@@ -465,7 +485,8 @@ def create_payment_draft(tx, *, lead_id, proposal_id, amount_minor, vat_minor, s
                                    "customer_email": lead["email"], "customer_company": lead["company"],
                                    "proposal_fingerprint": hashlib.sha256(json.dumps(proposal, sort_keys=True,
                                                 separators=(",", ":")).encode()).hexdigest(),
-                                   "provider": "demo" if _is_demo(tx) else "stripe",
+                                   "provider": "demo" if lead.get("is_test") is True else "stripe",
+                                   "record_mode": lead.get("record_mode", "UNCLASSIFIED"),
                                    "created_at": tx.now, "payout_status": "NOT_INITIATED"})
     lead["payment_id"] = result["id"]
     tx.put("lead", lead_id, lead)
@@ -477,6 +498,8 @@ def create_payment_draft(tx, *, lead_id, proposal_id, amount_minor, vat_minor, s
 def approve_payment(tx, payment_id, *, actor):
     policy.require_admin(actor)
     payment = _required(tx, "payment", payment_id)
+    if _is_demo(tx) and _lead(tx, payment["lead_id"]).get("is_test") is not True:
+        _error("live_payment_review_required", "Real payment drafts require an explicit review in LIVE mode; preparation cannot authorize payment")
     if payment.get("status") == "APPROVED":
         return payment
     if payment.get("status") != "DRAFT":
@@ -539,8 +562,11 @@ def request_payment(tx, payment_id, *, idempotency_key, actor="system", adapter=
         from . import budget
         real = adapter or StripeAdapter(_secret(tx, "STRIPE_SECRET_KEY"))
         origin = policy.get_settings(tx).get("public_origin", "")
+        live_key = bool(getattr(real, "api_key", "").startswith(("sk_live_", "rk_live_")))
+        # Conservative allowance, not an asserted Stripe quote. Reconcile actual fees.
+        fee_reserve = (payment["total_minor"] * 5 + 99) // 100 + 1000 if live_key else 1
         reservation = budget.reserve(tx, vendor="stripe", workflow_id=lead["id"],
-                                     amount_minor=1, currency="SEK", category="tools",
+                                     amount_minor=fee_reserve, currency="SEK", category="tools",
                                      idempotency_key="payment:" + idempotency_key, actor=actor)
         payment["status"] = "DISPATCHING"
         tx.put("payment", payment_id, payment)
@@ -551,6 +577,7 @@ def request_payment(tx, payment_id, *, idempotency_key, actor="system", adapter=
         _check_intent(tx, intent, "payment_request", actor, lead)
         current_payment = _required(tx, "payment", payment_id)
         lead = _payment_dispatch_checks(tx, current_payment)
+        policy.guard(tx, "payment_request", actor=actor, lead=lead)
         if current_payment.get("status") != "DISPATCHING":
             _error("payment_state_invalid", "Payment dispatch state changed after reservation")
         try:
@@ -561,10 +588,14 @@ def request_payment(tx, payment_id, *, idempotency_key, actor="system", adapter=
             tx.put("payment", payment_id, payment)
             _finish_external(tx, intent, payment, unknown=True)
             return _remember(tx, "payment.request", idempotency_key, payload, payment)
-        # This release's Stripe adapter accepts test credentials only, which do
-        # not create actual payment processing charges.
-        budget.release(tx, reservation["id"], reason="Stripe test-mode request; no real charge",
-                       definitive_no_charge=True, actor=actor)
+        # Test sessions incur no real processing fee. Real fee estimates stay
+        # reserved until actual provider billing evidence is reconciled.
+        if not result.get("livemode", False):
+            budget.release(tx, reservation["id"], reason="Stripe test-mode request; no real charge",
+                           definitive_no_charge=True, actor=actor)
+        else:
+            payment["fee_reservation_id"] = reservation["id"]
+            payment["cost_reconciliation_required"] = True
     payment.update(result)
     payment["provider"] = "demo" if _is_demo(tx) else "stripe"
     payment["status"] = "REQUESTED"
@@ -628,28 +659,36 @@ def receive_payment_event(tx, *, provider, raw_body, signature, actor="provider"
             or obj.get("amount_total") != payment["total_minor"]
             or str(obj.get("currency", "")).upper() != payment["currency"]):
         _error("payment_event_mismatch", "Provider reference, amount or currency does not match the approved payment")
-    if provider == "stripe" and payload.get("livemode") is not False:
-        _error("stripe_test_only", "Only Stripe test-mode events are accepted in this release")
+    if provider == "stripe" and (type(payload.get("livemode")) is not bool
+                                  or payload["livemode"] != payment.get("livemode", False)):
+        _error("payment_event_mode", "Signed event mode does not match the original Stripe session")
     paid = obj.get("payment_status") == "paid" and event_type != "checkout.session.async_payment_failed"
     # Completed checkout without actual payment is only initiation, not revenue.
     status = "paid" if paid else "failed" if event_type.endswith("failed") else "initiated"
-    if payment.get("status") not in ("REQUESTED", "INITIATED", "CONFIRMED", "FAILED"):
+    if payment.get("status") not in ("REQUESTED", "INITIATED", "CONFIRMED", "FAILED", "TEST_CONFIRMED"):
         _error("payment_state_invalid", "The payment request has not been created")
     event = tx.create("payment_event", {
         "event_id": event_id, "payment_id": payment_id, "lead_id": payment["lead_id"],
         "provider": provider, "provider_reference": obj["id"],
         "amount_minor": payment["total_minor"], "currency": payment["currency"],
         "status": status, "signature_verified": True, "created_at": tx.now,
+        "livemode": provider == "stripe" and payload.get("livemode") is True,
     }, id=event_id)
-    already_paid = payment.get("status") == "CONFIRMED"
+    from . import upgrade
+    sandbox_real = (provider == "stripe" and payload.get("livemode") is False
+                    and upgrade.classify_record(_lead(tx, payment["lead_id"])) == "REAL")
+    already_paid = payment.get("status") in {"CONFIRMED", "TEST_CONFIRMED"}
     if paid and not already_paid:
-        payment["status"] = "CONFIRMED"
+        payment["status"] = "TEST_CONFIRMED" if sandbox_real else "CONFIRMED"
         payment["confirmed_at"] = tx.now
         payment["confirmation_event_id"] = event_id
         # Provider payment confirmation says nothing about a bank payout.
         payment["payout_status"] = "NOT_INITIATED"
         tx.put("payment", payment_id, payment)
-        if policy.get_settings(tx).get("kill_switch"):
+        if sandbox_real:
+            event["sandbox_only"] = True
+            tx.put("payment_event", event_id, event)
+        elif policy.get_settings(tx).get("kill_switch"):
             event["pending_workflow_update"] = True
             tx.put("payment_event", event_id, event)
         else:
@@ -730,6 +769,10 @@ class OpenRouterAdapter:
 
 
 def llm_task(tx, *, role, text, workflow_id, idempotency_key, actor="system", adapter=None):
+    if tx.get("ai_config", "global") or not _is_demo(tx):
+        from . import ai
+        return ai.task(tx, role=role, text=text, workflow_id=workflow_id,
+                       idempotency_key=idempotency_key, actor=actor, adapter=adapter)
     from . import budget
     if role not in ALLOWED_LLM_ROLES:
         _error("agent_role_invalid", "Unknown agent role", 422)

@@ -137,6 +137,7 @@ def register_lead(tx: Any, payload: dict, *, actor: Any, key: str) -> dict:
             "source_url": source_url, "collected_at": tx.now, "created_at": tx.now,
             "entity_type": entity_type, "address_type": address_type,
             "is_test": bool(payload.get("is_test", False)), "state": "DISCOVERED",
+            "record_mode": "DEMO" if payload.get("is_test") else "UNCLASSIFIED",
             "need": _text(payload.get("need", ""), "need", required=False),
             "channel": "email", "compliance_approved": False,
             "compliance": {"approved": False, "approval_mode": None},
@@ -182,7 +183,11 @@ def review_compliance(tx: Any, lead_id: str, review: dict, *, actor: Any, key: s
             if settings["mode"] != "DEMO" or not lead.get("is_test"):
                 _error("SIMULATION_ONLY", "Simulated legal review is restricted to DEMO test leads")
         else:
-            require_admin(actor)
+            if not isinstance(actor, dict) or actor.get("role") != "admin":
+                from . import outreach
+                delegated = outreach.policy_review(tx, lead)
+                if delegated is None or delegated != review:
+                    require_admin(actor)
         basis = _text(review.get("lawful_basis", ""), "lawful basis", limit=1000, required=False)
         legal_evidence = _text(review.get("legal_review", ""), "legal review", limit=2000, required=False)
         consent_evidence = _text(review.get("consent_evidence", ""), "consent evidence", limit=2000, required=False)
@@ -197,11 +202,27 @@ def review_compliance(tx: Any, lead_id: str, review: dict, *, actor: Any, key: s
                       "channel": "email", "reviewed_by": actor_id(actor), "reviewed_at": tx.now,
                       "approval_mode": settings["mode"], "simulation": simulation,
                       "explicit_consent": explicit_consent, "consent_evidence": consent_evidence}
+        if review.get("policy_authorization"):
+            compliance["policy_authorization"] = deepcopy(review["policy_authorization"])
         lead.update({"compliance": compliance, "compliance_approved": approved,
                      "lawful_basis": basis, "legal_review": legal_evidence, "channel": "email"})
         return _move(tx, lead, "COMPLIANCE_CHECK" if approved else "MANUAL_REVIEW", actor,
                      reason="Recorded legal/channel review" if approved else "Contact policy needs explicit review")
     return _once(tx, "lead.compliance", key, {"lead_id": lead_id, "review": review}, apply)
+
+
+def contact_message(lead: dict, *, followup=False) -> dict:
+    """Reviewed deterministic template: company substitution never grants authority."""
+    company = _text(lead.get("company"), "company", limit=200)
+    if any(c in company for c in "\r\n"):
+        _error("INVALID_COMPANY", "Use a single-line company name", 422)
+    return {
+        "subject": ("Following up: " if followup else "") + f"Incoming customer enquiries at {company}",
+        "body": (f"Hello {company},\n\n" + ("Following up on our enquiry-assistant scope. " if followup else "")
+                 + "We offer a scoped assistant that classifies incoming customer enquiries and prepares reply drafts for your review. "
+                 "It does not guarantee sales or revenue. Would a test demonstration be useful?\n\n"
+                 "Reply unsubscribe if you do not want further contact."),
+    }
 
 
 def prepare_contact(tx: Any, lead_id: str, *, actor: Any, key: str) -> dict:
@@ -212,11 +233,7 @@ def prepare_contact(tx: Any, lead_id: str, *, actor: Any, key: str) -> dict:
         if not lead.get("compliance_approved"):
             _error("COMPLIANCE_REQUIRED", "Contact needs an approved legal/channel review")
         lead["contact_draft"] = {
-            "subject": f"Incoming customer enquiries at {lead['company']}",
-            "body": (f"Hello {lead['company']},\n\nWe offer a scoped assistant that classifies incoming "
-                     "customer enquiries and prepares reply drafts for your review. It does not guarantee "
-                     "sales or revenue. Would a test demonstration be useful?\n\n"
-                     "Reply unsubscribe if you do not want further contact."),
+            **contact_message(lead),
             "status": "DRAFT", "template": "contact-standard-v1",
         }
         return _move(tx, lead, "READY_TO_CONTACT", actor, reason="Prepared an unsent standard contact draft")
@@ -263,12 +280,12 @@ def price_proposal(tx: Any, payload: dict) -> dict:
     settings = get_settings(tx)
     list_price = _integer(payload.get("list_price_minor", 500000), "list price")
     discount = _integer(payload.get("discount_bps", 0), "discount basis points", maximum=10000)
-    if list_price < settings["minimum_list_price_minor"]:
+    if list_price < max(500000, settings["minimum_list_price_minor"]):
         _error("PRICE_FLOOR", "The ordinary starting price is below the approved minimum")
-    if discount > settings["max_discount_bps"]:
+    if discount > min(1000, settings["max_discount_bps"]):
         _error("DISCOUNT_LIMIT", "The proposed discount exceeds the approved limit")
     amount = (list_price * (10000 - discount) + 9999) // 10000
-    if amount < settings["minimum_discounted_price_minor"]:
+    if amount < max(450000, settings["minimum_discounted_price_minor"]):
         _error("PRICE_FLOOR", "The discounted starting price is below the absolute minimum")
     vat_rate = _integer(payload.get("vat_rate_bps", 2500), "VAT basis points", maximum=10000)
     vat = (amount * vat_rate + 5000) // 10000
@@ -290,6 +307,14 @@ def prepare_proposal(tx: Any, lead_id: str, payload: dict, *, actor: Any, key: s
         if payload.get("terms", "standard-v1") != "standard-v1":
             _error("NONSTANDARD_TERMS", "Nonstandard contracts require manual legal review")
         price = price_proposal(tx, payload)
+        billing_stage = payload.get("billing_stage", "after_delivery")
+        if billing_stage not in {"after_delivery", "before_delivery"}:
+            _error("BILLING_STAGE", "Choose an explicit standard payment stage", 422)
+        if billing_stage == "before_delivery":
+            billing_review = tx.get("pipeline_config", "global", {})
+            if not (billing_review.get("billing_stage") == "before_delivery"
+                    and billing_review.get("authorization_epoch") == get_settings(tx).get("safety_epoch")):
+                require_admin(actor)
         if lead["state"] == "REPLIED":
             lead = _move(tx, lead, "NEGOTIATING", actor, reason="Discussing an approved standard service")
         proposal = tx.create("proposal", {
@@ -297,6 +322,9 @@ def prepare_proposal(tx: Any, lead_id: str, payload: dict, *, actor: Any, key: s
             "scope": deepcopy(service["scope"]), "delivery_days": service["delivery_days"],
             "customer_responsibilities": deepcopy(service["customer_responsibilities"]),
             "recurring_minor": service["recurring_minor"], "terms": service["terms"],
+            "billing_stage": billing_stage,
+            "billing_terms": ("Payment after verified delivery" if billing_stage == "after_delivery" else
+                              "Payment before production delivery; installation is planned only after verified payment and explicit customer access"),
             "limitations": deepcopy(service["limitations"]),
             "acceptance_criteria": deepcopy(service["acceptance_criteria"]), "created_at": tx.now,
         })
@@ -347,6 +375,7 @@ def proposal_message(tx: Any, lead_id: str) -> dict:
             f"Total including VAT: {sek(proposal['total_minor'])}",
             f"Delivery: {proposal['delivery_days']} business days after agreed access and test data are available.",
             f"Recurring fee: {sek(proposal['recurring_minor'])} excluding VAT per month."]
+    body.append("Payment terms: " + proposal.get("billing_terms", "Payment after verified delivery"))
     for heading, items in (("Scope", proposal["scope"]),
                            ("Customer responsibilities", proposal["customer_responsibilities"]),
                            ("Acceptance criteria", proposal["acceptance_criteria"]),
@@ -397,6 +426,12 @@ def process_enquiry(tx: Any, payload: dict, *, actor: Any, key: str) -> dict:
     The output is persisted but never sent and text never becomes executable
     instructions. A customer inbox/CRM write needs a separately authorized adapter.
     """
+    if payload.get("context") == "acceptance_test":
+        _error("TEST_CONTEXT_RESERVED", "Acceptance-test context is assigned by the delivery runner", 422)
+    return _process_enquiry(tx, payload, actor=actor, key=key)
+
+
+def _process_enquiry(tx: Any, payload: dict, *, actor: Any, key: str, acceptance_case=None) -> dict:
     def apply() -> dict:
         guard(tx, "research", actor=actor)
         text = _text(payload.get("text"), "enquiry")
@@ -407,9 +442,13 @@ def process_enquiry(tx: Any, payload: dict, *, actor: Any, key: str) -> dict:
             "draft_reply": f"Thank you for your enquiry. Our team will review your {category} request and respond after checking the details.",
             "draft_status": "UNSENT", "suggested_follow_up": "Review and respond within one business day",
             "created_at": tx.now,
+            "context": "acceptance_test" if acceptance_case is not None else "customer_enquiry",
+            "test_case": acceptance_case,
         })
-        tx.create("manual_task", {"title": "Review enquiry response draft", "enquiry_id": enquiry["id"],
-                                  "status": "PENDING", "role": "DELIVERY", "created_at": tx.now})
+        if acceptance_case is None:
+            tx.create("manual_task", {"title": "Review enquiry response draft", "enquiry_id": enquiry["id"],
+                                      "status": "PENDING", "role": "DELIVERY", "created_at": tx.now},
+                      id="enquiry-review-" + enquiry["id"])
         tx.audit(actor_id(actor), "enquiry.classified", {"enquiry_id": enquiry["id"], "category": category,
                                                        "external_write": False})
         return enquiry
@@ -437,8 +476,9 @@ def deliver_service(tx: Any, lead_id: str, config: dict, *, actor: Any, key: str
         for index, case in enumerate(cases):
             if not isinstance(case, dict) or case.get("expected") not in ("sales", "support", "billing", "other"):
                 _error("INVALID_TEST_CASE", "Each case needs text and a supported expected category", 422)
-            inquiry = process_enquiry(tx, {"text": _text(case.get("text"), "test enquiry"),
-                                          "customer_id": lead_id}, actor=actor, key=f"{key}:case:{index}")
+            inquiry = _process_enquiry(tx, {"text": _text(case.get("text"), "test enquiry"),
+                                          "customer_id": lead_id}, actor=actor, key=f"{key}:case:{index}",
+                                       acceptance_case=index + 1)
             results.append({"case": index + 1, "expected": case["expected"], "actual": inquiry["category"],
                             "passed": case["expected"] == inquiry["category"], "draft_unsent": True,
                             "enquiry_id": inquiry["id"]})
@@ -472,11 +512,37 @@ def require_delivery_for_payment(tx: Any, lead_id: str) -> None:
     if get_settings(tx)["mode"] != "LIVE":
         return
     lead = _lead(tx, lead_id)
+    proposal = tx.get("proposal", lead.get("proposal_id", ""))
+    if (proposal and proposal.get("billing_stage") == "before_delivery"
+            and proposal.get("status") == "ACCEPTED" and proposal.get("acceptance_event_id")
+            and proposal.get("billing_terms") == "Payment before production delivery; installation is planned only after verified payment and explicit customer access"):
+        acceptance = tx.get("inbound_event", proposal["acceptance_event_id"])
+        if (acceptance and acceptance.get("signature_verified") is True
+                and acceptance.get("provider") != "demo" and acceptance.get("lead_id") == lead_id
+                and acceptance.get("from", "").lower() == lead.get("email", "").lower()):
+            return
     delivery = tx.get("delivery", lead.get("delivery_id", ""))
     if (not delivery or delivery.get("lead_id") != lead_id
             or delivery.get("status") != "PRODUCTION_VERIFIED"
             or delivery.get("production_installed") is not True):
         _error("PRODUCTION_DELIVERY_REQUIRED", "Local tests do not verify a customer production installation; manual deployment review is required")
+
+
+def prepare_payment_gate(tx: Any, lead_id: str, *, actor: Any, key: str) -> dict:
+    """Explicit new prepayment terms; legacy delivery-first contracts stay intact."""
+    def apply():
+        lead = _lead(tx, lead_id)
+        _state(lead, "ACCEPTED")
+        proposal = tx.get("proposal", lead.get("proposal_id", ""))
+        if not proposal or proposal.get("billing_stage") != "before_delivery":
+            _error("DELIVERY_FIRST", "This accepted contract requires verified delivery first")
+        require_delivery_for_payment(tx, lead_id)
+        tx.put("manual_task", "payment-review-" + proposal["id"], {
+            "title": "Manually approve the payment request", "lead_id": lead_id,
+            "status": "PENDING", "role": "FINANCE", "created_at": tx.now})
+        return _move(tx, lead, "PAYMENT_APPROVAL_REQUIRED", actor,
+                     reason="Customer explicitly accepted prepayment terms; exact administrator payment approval still required")
+    return _once(tx, "payment.prepayment_gate", key, {"lead_id": lead_id}, apply)
 
 
 def payment_approval_required(tx: Any, lead_id: str, *, actor: Any, key: str) -> dict:
@@ -516,7 +582,19 @@ def record_payment_confirmed(tx: Any, lead_id: str, event_id: str, *, actor: Any
                 or event.get("amount_minor") != payment.get("total_minor") or event.get("currency") != "SEK"
                 or event.get("provider_reference") != payment.get("provider_reference")):
             _error("VERIFIED_PAYMENT_REQUIRED", "Only a matching verified provider payment can confirm revenue")
+        from . import upgrade
+        if upgrade.classify_record(lead) == "REAL" and (event.get("livemode") is not True or payment.get("livemode") is not True):
+            _error("REAL_PAYMENT_REQUIRED", "Sandbox receipts cannot advance a real customer's paid workflow")
         lead = _move(tx, lead, "PAYMENT_CONFIRMED", actor, reason="Signed provider event confirms the correct payment amount and currency")
+        proposal = tx.get("proposal", lead.get("proposal_id", ""), {})
+        if proposal.get("billing_stage") == "before_delivery":
+            tx.put("delivery_plan", "delivery-plan-" + lead_id, {
+                "lead_id": lead_id, "payment_id": payment["id"], "status": "AWAITING_CUSTOMER_ACCESS",
+                "production_installed": False, "created_at": tx.now})
+            tx.put("manual_task", "delivery-access-" + lead_id, {
+                "lead_id": lead_id, "title": "Review delivery agreement and customer integration access",
+                "status": "PENDING", "role": "DELIVERY", "created_at": tx.now})
+            return _move(tx, lead, "DELIVERY_IN_PROGRESS", actor, reason="Verified prepayment recorded; plan installation without claiming delivery complete")
         delivery = tx.get("delivery", lead.get("delivery_id", ""))
         verified_demo = get_settings(tx)["mode"] == "DEMO" and delivery and delivery.get("status") == "TEST_VERIFIED"
         verified_production = delivery and delivery.get("status") == "PRODUCTION_VERIFIED" and delivery.get("production_installed") is True
