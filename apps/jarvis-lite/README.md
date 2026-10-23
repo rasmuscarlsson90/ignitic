@@ -1,8 +1,15 @@
-# Jarvis Lite v1.2 · powered by Ignitic
+# Jarvis Lite v1.3 · powered by Ignitic
 
 An internal business-operator console in one FastAPI application with PostgreSQL,
 a database-backed queue and six logical agent roles. The original Ignitic stack
 and its deployment files remain available independently.
+
+v1.3 adds bounded structured-response normalization/correction, durable mission
+controls, separate routable work areas with dark/light themes, internal QA,
+expanded saved reports, weekly scheduling and AI-specific budget reporting.
+Read the [v1.3 review and operating guide](../../docs/jarvis-lite-v1.3.md) for
+the exact boundaries, additive upgrade, costs and manual acceptance checklist.
+No new required environment variable or infrastructure service is introduced.
 
 **DEMO is the default. No live providers, real customer messages, payment requests,
 customer installations, subscriptions or trading actions are enabled by setup.**
@@ -10,13 +17,13 @@ customer installations, subscriptions or trading actions are enabled by setup.**
 Version 1.2 adds persistent internal missions for six bounded agent roles,
 source-attributed research/CRM, unsent offers, five versioned service outputs,
 explicit AI activation/diagnostics and internal schedules that default off.
-**Real customer contact and payment requests are blocked by the server in v1.2,
+**Real customer contact and payment requests remain blocked by the server in v1.3,
 including when old LIVE flags or approvals exist.** Paid AI requires its own
 server capability, administrator approval, compatibility and budget checks.
 An existing Render installation keeps its PostgreSQL data, encrypted
 credentials, operators, sessions and deployment environment. Do not run local
 `init-demo` against production or recreate a production database/key to upgrade.
-Follow the [v1.2 review and upgrade guide](../../docs/jarvis-lite-v1.2.md), including
+The historical [v1.2 review and upgrade guide](../../docs/jarvis-lite-v1.2.md) remains available, including
 the manual Render rehearsal and future separately authorized first-AI-test
 checklist. This branch does not deploy, activate providers or create resources.
 
@@ -142,7 +149,7 @@ synthetic receipt or test payment never counts as genuine income.
 
 Current provider availability, actual production Render settings and a real paid
 AI request have not been verified by local mock-transport tests. The
-[v1.2 guide](../../docs/jarvis-lite-v1.2.md) documents remaining manual checks,
+[v1.3 guide](../../docs/jarvis-lite-v1.3.md) documents remaining manual checks,
 cost controls and a bounded future AI diagnostic. Customer installation, lawful
 live outreach and live billing need a separate future review and implementation;
 this release does not authorize or enable them.
