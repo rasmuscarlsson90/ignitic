@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 
 from cryptography.fernet import Fernet
 
-# v1.2 is an internal-work release. Runtime flags cannot lift this release lock.
+# Internal-work release. Runtime flags cannot lift this release lock.
 INTERNAL_ONLY_RELEASE = True
 
 
@@ -79,7 +79,7 @@ def guard(tx, action, actor=None, lead=None):
         operations.guard_scheduled(tx)
     business_actions = {"contact", "email", "send_email", "proposal", "external_write", "payment_request"}
     if INTERNAL_ONLY_RELEASE and settings["mode"] == "LIVE" and action in business_actions:
-        raise PolicyError("internal_only_release", "Jarvis Lite v1.2 prohibits external customer contact and payment requests", 403)
+        raise PolicyError("internal_only_release", "Den här versionen tillåter inte extern kundkontakt eller betalningsbegäranden", 403)
     if settings["mode"] == "LIVE" and action in business_actions:
         if os.getenv("JARVIS_ALLOW_LIVE", "false").lower() != "true" or not settings.get("live_approved"):
             raise PolicyError("live_disabled", "Separate live authorization has not been enabled", 403)
@@ -195,3 +195,4 @@ def initialize(tx):
     upgrade.initialize(tx)
     from . import operations
     operations.initialize(tx)
+    operations.initialize_v13(tx)

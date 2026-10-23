@@ -159,7 +159,7 @@ def create_app(database=None, *, worker_enabled=None):
         if database is None:
             db.close()
 
-    app = FastAPI(title="Jarvis Lite · powered by Ignitic", version="1.2.0", lifespan=lifespan,
+    app = FastAPI(title="Jarvis Lite · powered by Ignitic", version="1.3.0", lifespan=lifespan,
                   docs_url=None if production else "/docs")
     app.state.db = db
 
@@ -205,7 +205,7 @@ def create_app(database=None, *, worker_enabled=None):
     def health():
         with db.engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        return {"status": "healthy", "service": "jarvis-lite", "version": "1.2.0"}
+        return {"status": "healthy", "service": "jarvis-lite", "version": "1.3.0"}
 
     @app.post("/api/auth/login")
     def login(body: Login, request: Request):
@@ -458,7 +458,7 @@ def create_app(database=None, *, worker_enabled=None):
         with db.transaction() as tx:
             actor = who(tx, request, True, True)
             if policy.INTERNAL_ONLY_RELEASE:
-                raise PolicyError("internal_only_release", "External business actions cannot be enabled in v1.2", 403)
+                raise PolicyError("internal_only_release", "External business actions cannot be enabled in this release", 403)
             if os.getenv("JARVIS_ALLOW_LIVE", "false").lower() != "true":
                 raise PolicyError("live_disabled", "Live mode is disabled by the deployment; separate authorization is required", 403)
             settings = policy.get_settings(tx)
@@ -477,6 +477,8 @@ def create_app(database=None, *, worker_enabled=None):
     register_routes(app, db, who)
     from .api_v12 import register_routes as register_v12
     register_v12(app, db, who)
+    from .api_v13 import register_routes as register_v13
+    register_v13(app, db, who)
 
     @app.post("/api/leads/{lead_id}/{action}")
     def lead_action(lead_id: str, action: Literal["research", "qualify", "compliance", "proposal", "accept", "deliver"], body: Data, request: Request):
@@ -513,6 +515,13 @@ def create_app(database=None, *, worker_enabled=None):
 
     @app.get("/agents")
     def agent_center():
+        return FileResponse(static / "index.html")
+
+    @app.get("/{view}/{path:path}")
+    @app.get("/{view}")
+    def workspace_view(view: str, path: str = ""):
+        if view not in {"agents", "missions", "research", "deliverables", "finance", "settings"}:
+            raise PolicyError("view_not_found", "Vyn finns inte", 404)
         return FileResponse(static / "index.html")
 
     return app

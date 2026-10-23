@@ -21,12 +21,15 @@ from .store import fingerprint
 TIMEZONE = "Europe/Stockholm"
 ZONE = ZoneInfo(TIMEZONE)
 UPGRADE_ID = "jarvis-lite-v1.2"
+UPGRADE_V13_ID = "jarvis-lite-v1.3"
 KINDS = frozenset({"mission", "factory", "lead_rescore", "report"})
-DELIVERABLES = frozenset({"market_analysis", "seo_analysis", "content_calendar", "marketing_strategy", "prospecting_report"})
+DELIVERABLES = frozenset({"market_analysis", "seo_analysis", "content_calendar", "marketing_strategy", "prospecting_report",
+    "competitor_analysis", "business_plan", "research_report", "lead_report", "proposal_draft", "action_plan",
+    "financial_analysis", "opportunity_report"})
 DEFAULTS = {"enabled": False, "kind": "report", "cadence": "daily", "daily_at": "08:00",
-            "interval_minutes": 1440, "max_runs_per_day": 1, "max_cost_minor": 1000,
+            "interval_minutes": 1440, "max_runs_per_day": 1, "max_cost_minor": 1000, "max_cost_per_run_minor": 1000,
             "timezone": TIMEZONE, "goal": "", "source_ids": [], "lead_ids": [],
-            "deliverable_kind": "market_analysis", "order_id": "", "lead_id": "", "priority": 5}
+            "deliverable_kind": "market_analysis", "order_id": "", "lead_id": "", "priority": 5, "weekday": 0}
 ACTIVE_JOBS = frozenset({"queued", "leased", "paused", "uncertain"})
 
 
@@ -36,6 +39,14 @@ def initialize(tx):
         tx.put("upgrade", UPGRADE_ID, {"version": "1.2", "applied_at": tx.now,
                                       "data_reset": False, "external_actions_enabled": False})
         tx.audit("upgrade", "upgrade.v12_applied", {"deleted_records": 0, "activated_capabilities": []})
+
+
+def initialize_v13(tx):
+    """v1.3 adds one marker, leaving every preexisting record unchanged."""
+    if not tx.get("upgrade", UPGRADE_V13_ID):
+        tx.put("upgrade", UPGRADE_V13_ID, {"version": "1.3", "applied_at": tx.now,
+            "data_reset": False, "external_actions_enabled": False, "existing_records_rewritten": 0})
+        tx.audit("upgrade", "upgrade.v13_applied", {"deleted_records": 0, "activated_capabilities": []})
 
 
 def _text(value, name, maximum=500, minimum=1):
@@ -72,6 +83,11 @@ def _next(schedule, now):
     hour, minute = map(int, schedule["daily_at"].split(":"))
     local = datetime.fromtimestamp(now, ZONE)
     candidate = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if schedule["cadence"] == "weekly":
+        candidate += timedelta(days=(schedule.get("weekday", 0) - local.weekday()) % 7)
+        if candidate.timestamp() <= now:
+            candidate += timedelta(days=7)
+        return candidate.timestamp()
     if candidate.timestamp() <= now:
         candidate = (local + timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
     return candidate.timestamp()
@@ -90,14 +106,18 @@ def configure_schedule(tx, schedule_id, config, actor):
     value.pop("reason", None)
     if type(value["enabled"]) is not bool or not isinstance(value["kind"], str) or value["kind"] not in KINDS:
         raise PolicyError("schedule_input", "Only internal mission/factory/lead_rescore/report schedules are permitted", 422)
-    if value["timezone"] != TIMEZONE or not isinstance(value["cadence"], str) or value["cadence"] not in {"daily", "interval"}:
-        raise PolicyError("schedule_input", "Use a daily or interval schedule in Europe/Stockholm", 422)
+    if value["timezone"] != TIMEZONE or not isinstance(value["cadence"], str) or value["cadence"] not in {"daily", "weekly", "interval"}:
+        raise PolicyError("schedule_input", "Use a daily, weekly or interval schedule in Europe/Stockholm", 422)
     if not isinstance(value["daily_at"], str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value["daily_at"]):
         raise PolicyError("schedule_input", "daily_at must be HH:MM in Europe/Stockholm", 422)
     _integer(value["interval_minutes"], "interval_minutes", 15, 10080)
     _integer(value["max_runs_per_day"], "max_runs_per_day", 1, 24)
     _integer(value["max_cost_minor"], "max_cost_minor", 1, 50000)
+    if "max_cost_per_run_minor" not in config:
+        value["max_cost_per_run_minor"] = min(value["max_cost_per_run_minor"], value["max_cost_minor"])
+    _integer(value["max_cost_per_run_minor"], "max_cost_per_run_minor", 1, value["max_cost_minor"])
     _integer(value["priority"], "priority", 1, 10)
+    _integer(value["weekday"], "weekday", 0, 6)
     value["source_ids"] = _ids(value["source_ids"], "source_ids")
     value["lead_ids"] = _ids(value["lead_ids"], "lead_ids")
     if not isinstance(value["deliverable_kind"], str) or value["deliverable_kind"] not in DELIVERABLES:
@@ -147,6 +167,15 @@ def _spend(tx, schedule_id):
         if linked and (entry["state"] == "RESERVED" or entry.get("created_at", 0) >= start):
             amount += int(entry.get("reserved_sek_minor", 0) if entry["state"] == "RESERVED" else entry.get("actual_sek_minor", 0))
     return amount
+
+
+def _run_spend(tx, run_id):
+    mission_ids = {mission["id"] for mission in tx.list("business_mission")
+                   if mission.get("schedule_run_id") == run_id}
+    return sum(int(entry.get("reserved_sek_minor", 0) if entry["state"] == "RESERVED"
+                   else entry.get("actual_sek_minor", 0)) for entry in tx.list("budget_entry")
+        if entry.get("state") in {"RESERVED", "SETTLED", "ACTUAL"}
+        and (entry.get("schedule_run_id") == run_id or entry.get("mission_id") in mission_ids))
 
 
 def schedules(tx):
@@ -203,6 +232,8 @@ def guard_scheduled(tx, estimated_minor=None):
         _integer(estimated_minor, "estimated_minor", 0, 50000)
     if _spend(tx, schedule["id"]) + (estimated_minor or 0) > schedule["max_cost_minor"]:
         raise PolicyError("schedule_budget", "The internal schedule's daily cost allowance is exhausted", 409)
+    if _run_spend(tx, run["id"]) + (estimated_minor or 0) > schedule.get("max_cost_per_run_minor", schedule["max_cost_minor"]):
+        raise PolicyError("schedule_run_budget", "Kostnadstaket för den schemalagda körningen är förbrukat", 409)
 
 
 def _attach(tx, job, schedule, run):
@@ -218,7 +249,8 @@ def _queue_schedule(tx, schedule, key, run):
         from . import engine
         mission = engine.create_mission(tx, {"goal": schedule["goal"], "source_ids": schedule["source_ids"],
             "lead_ids": schedule["lead_ids"], "deliverable_kind": schedule["deliverable_kind"],
-            "max_cost_minor": schedule["max_cost_minor"] - schedule["cost_today_minor"],
+            "max_cost_minor": min(schedule["max_cost_minor"] - schedule["cost_today_minor"],
+                                  schedule.get("max_cost_per_run_minor", schedule["max_cost_minor"])),
             "priority": schedule["priority"]}, actor=actor, key=key,
             schedule_context={"schedule_id": schedule["id"], "schedule_revision": schedule["revision"],
                               "schedule_run_id": run["id"]})
@@ -283,6 +315,48 @@ def daily_report(tx, actor, key):
     return tx.idempotency_put("operations.report", key, payload, result)
 
 
+def _real(record):
+    return (record.get("simulated") is not True and record.get("is_test") is not True
+            and record.get("data_mode", record.get("record_mode")) != "DEMO")
+
+
+def _mission_metrics(tx, days, finance):
+    missions = [mission for mission in tx.list("business_mission") if _real(mission)]
+    ids = {mission["id"] for mission in missions}
+    tasks = [task for task in tx.list("agent_task") if task.get("mission_id") in ids and _real(task)]
+    jobs = [job for job in tx.list("job") if job.get("kind") == "internal_agent"
+            and job.get("payload", {}).get("mission_id") in ids and _real(job)]
+    states = {"active": {"RUNNING"}, "queued": {"QUEUED"}, "completed": {"COMPLETED"}, "paused": {"PAUSED"},
+              "review_required": {"REVIEW_REQUIRED", "BLOCKED"}, "failed": {"FAILED"},
+              "cancelled": {"CANCELLED"}, "uncertain": {"UNCERTAIN"}}
+    counters = {name: sum(mission.get("status") in accepted for mission in missions) for name, accepted in states.items()}
+    series = {day: {"date": day, "created": 0, "completed": 0} for day in days}
+    for mission in missions:
+        date = _date(mission.get("created_at", 0)).isoformat()
+        if date in series:
+            series[date]["created"] += 1
+        if mission.get("status") == "COMPLETED":
+            date = _date(mission.get("completed_at", mission.get("updated_at", mission.get("created_at", 0)))).isoformat()
+            if date in series:
+                series[date]["completed"] += 1
+    costs = {row["id"]: row for row in finance["by_agent"]}
+    roles = ("ceo", "lead_research", "sales", "delivery", "finance", "compliance")
+    activity = []
+    for role in roles:
+        own = [task for task in tasks if task.get("role") == role]
+        live = [job for job in jobs if job.get("payload", {}).get("role") == role
+                and job.get("status") == "leased" and (job.get("lease_until") or 0) > tx.now]
+        activity.append({"role": role, "active_jobs": len(live),
+            "waiting_jobs": sum(job.get("status") == "queued" and job.get("payload", {}).get("role") == role for job in jobs),
+            "completed_tasks": sum(task.get("status") == "COMPLETED" for task in own),
+            "failed_tasks": sum(task.get("status") in {"FAILED", "UNCERTAIN"} for task in own),
+            "review_required_tasks": sum(task.get("status") in {"BLOCKED", "REVIEW_REQUIRED"} for task in own),
+            "booked_cost_minor": costs.get(role, {}).get("booked_cost_minor", 0),
+            "reserved_cost_minor": costs.get(role, {}).get("reserved_cost_minor", 0)})
+    return {"missions": counters, "active_agents": sum(row["active_jobs"] > 0 for row in activity),
+            "agent_activity": activity, "mission_series": list(series.values())}
+
+
 def analytics(tx):
     """Actual costs and signed real receipts, never estimated or demo revenue."""
     from . import intelligence
@@ -307,7 +381,8 @@ def analytics(tx):
             for field in ("input_tokens", "output_tokens"):
                 bucket[field] += int(entry.get(field, 0))
             bucket["ai_calls"] += int(entry.get("calls", 0))
-    jobs = tx.list("job")
+    real_kinds = {"internal_agent", "factory_generate", "lead_rescore", "sales_prepare", "operations_report"}
+    jobs = [job for job in tx.list("job") if job.get("kind") in real_kinds and _real(job)]
     for job in jobs:
         bucket = buckets.get(_date(job.get("created_at", 0)).isoformat())
         if bucket is not None:
@@ -331,6 +406,7 @@ def analytics(tx):
     tasks = tx.list("agent_task")
     results = tx.list("service_result")
     financial = budget.summary(tx)
+    dimensions = budget.analytics(tx)
     return {"timezone": TIMEZONE, "currency": "SEK", "verified_leads": len(verified_leads),
         "verification_definition": "REAL records with current approved licensed source citations; not an independent company-registry identity check",
         "research_tasks": sum(task.get("role") == "lead_research" for task in tasks),
@@ -352,4 +428,5 @@ def analytics(tx):
         "approved_service_outputs": sum(result.get("status") == "APPROVED" for result in results),
         "pending_approvals": sum(result.get("status") == "NEEDS_REVIEW" for result in results)
             + sum(action.get("status") == "PENDING" for action in tx.list("agent_action")),
-        "series": list(buckets.values()), "generated_at": tx.now}
+        "series": list(buckets.values()), "generated_at": tx.now, "finance": dimensions,
+        **_mission_metrics(tx, days, dimensions)}

@@ -6,10 +6,13 @@ PostgreSQL and SQLite. No provider is contacted by this module.
 """
 
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
+from datetime import datetime
 import hashlib
 import json
 import math
 import uuid
+from typing import Any
+from zoneinfo import ZoneInfo
 
 from .policy import PolicyError, get_settings, guard, require_admin
 
@@ -173,6 +176,66 @@ def _emit_alerts(tx, actor):
     tx.put("budget_notice", "thresholds", current)
 
 
+def ai_limits(tx):
+    """Additional AI ceilings; pending provider liabilities never age out."""
+    limits = _limits(tx)
+    saved = tx.get("ai_budget_policy", "global", {})
+    daily = saved.get("daily_limit_minor", limits["daily"])
+    monthly = saved.get("monthly_limit_minor", limits["tools_30d"])
+    if type(daily) is not int or type(monthly) is not int or min(daily, monthly) < 0:
+        raise PolicyError("invalid_ai_budget_policy", "Invalid server AI budget limits", 503)
+    daily = min(daily, limits["daily"], 50000)
+    monthly = min(monthly, limits["tools_30d"], 50000)
+    usage = {"daily": 0, "monthly": 0}
+    for entry in tx.list("budget_entry"):
+        if entry.get("category") != "ai" or entry.get("state") not in {"RESERVED", "SETTLED", "ACTUAL"}:
+            continue
+        pending = entry["state"] == "RESERVED"
+        amount = int(entry.get("reserved_sek_minor", 0) if pending else entry.get("actual_sek_minor", 0))
+        for window, seconds in (("daily", DAY), ("monthly", MONTH)):
+            if pending or entry.get("created_at", 0) >= tx.now - seconds:
+                usage[window] += amount
+    return {"daily_limit_minor": daily, "monthly_limit_minor": monthly, "currency": "SEK",
+            "daily_used_minor": usage["daily"], "monthly_used_minor": usage["monthly"],
+            "daily_remaining_minor": max(0, daily - usage["daily"]),
+            "monthly_remaining_minor": max(0, monthly - usage["monthly"]),
+            "window_definition": "Rolling 24 hours/30 days plus all unsettled AI reservations",
+            "reviewed_at": saved.get("reviewed_at"), "reviewed_by": saved.get("reviewed_by")}
+
+
+def configure_ai_limits(tx, config, actor):
+    require_admin(actor)
+    if not isinstance(config, dict) or set(config) - {"daily_limit_minor", "monthly_limit_minor", "reason"}:
+        raise PolicyError("ai_budget_input", "Only daily/monthly AI limits and a review reason are supported", 422)
+    reason = config.get("reason")
+    if not isinstance(reason, str) or not 12 <= len(reason.strip()) <= 500:
+        raise PolicyError("ai_budget_review", "Document the administrator's AI cost review", 422)
+    current = ai_limits(tx)
+    daily = config.get("daily_limit_minor", current["daily_limit_minor"])
+    monthly = config.get("monthly_limit_minor", current["monthly_limit_minor"])
+    if (type(daily) is not int or type(monthly) is not int or not 0 <= daily <= monthly <= 50000):
+        raise PolicyError("ai_budget_input", "AI limits must be integer SEK minor units, 0 ≤ daily ≤ monthly ≤ 50000", 422)
+    tx.put("ai_budget_policy", "global", {"daily_limit_minor": daily, "monthly_limit_minor": monthly,
+           "reviewed_at": tx.now, "reviewed_by": str(actor.get("id", "unknown"))})
+    settings = get_settings(tx)
+    settings["safety_epoch"] += 1
+    tx.put("settings", "global", settings)
+    from . import jobs
+    jobs.pause_for_kill(tx, actor=actor)
+    tx.audit(actor, "budget.ai_limits_reviewed", {"daily_limit_minor": daily, "monthly_limit_minor": monthly,
+                                                 "reason": reason.strip(), "providers_activated": False})
+    return ai_limits(tx)
+
+
+def guard_ai_limits(tx, additional_minor=0):
+    additional_minor = _amount(additional_minor)
+    limits = ai_limits(tx)
+    for window in ("daily", "monthly"):
+        if limits[window + "_used_minor"] + additional_minor > limits[window + "_limit_minor"]:
+            raise PolicyError("ai_" + window + "_budget", "AI-budgeten för " +
+                              ("dygnet" if window == "daily" else "30 dagar") + " är förbrukad inklusive reserverade kostnader", 409)
+
+
 def reserve(tx, *, vendor, workflow_id, amount_minor, currency="SEK", category="ai",
             idempotency_key, actor="system"):
     """Atomically reserve a provider cost; equal retries return the same entry."""
@@ -205,6 +268,8 @@ def reserve(tx, *, vendor, workflow_id, amount_minor, currency="SEK", category="
     for window in sorted(targets):
         if usage[window] >= limits[window] or usage[window] + sek_amount > limits[window]:
             raise PolicyError("budget_exhausted", f"The {window} SEK budget ceiling blocks this reservation", 409)
+    if category == "ai":
+        guard_ai_limits(tx, sek_amount)
     entry = {**payload, "fingerprint": fingerprint, "idempotency_key": key,
              "state": "RESERVED", "reserved_sek_minor": sek_amount, "fx": fx,
              "created_at": tx.now, "actual_minor": None, "actual_sek_minor": None,
@@ -331,4 +396,89 @@ def summary(tx):
         "This ledger blocks new application-controlled costs. Cloud subscriptions, storage and other fixed vendor charges "
         "can continue while Jarvis is stopped; set vendor spending limits and stop/delete billable resources manually."
     )
+    result["ai_limits"] = ai_limits(tx)
     return result
+
+
+def analytics(tx):
+    """Read-only dimensions of actual ledger entries and reported provider usage.
+
+    Provider USD strings retain their precision. They are never added to SEK
+    ledger costs or interpreted as revenue; booked SEK uses the reservation's
+    frozen documented rate and conservative minor-unit rounding.
+    """
+    zone = ZoneInfo("Europe/Stockholm")
+    local = datetime.fromtimestamp(tx.now, zone)
+    day_start = local.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    month_start = local.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
+    traces = {trace.get("reservation_id"): trace for trace in tx.list("ai_trace") if trace.get("simulated") is False}
+    results = {result.get("trace_id"): result for result in tx.list("agent_result")
+               if result.get("simulated") is False and result.get("provider") == "openrouter" and result.get("trace_id")}
+    groups: dict[str, dict[str, dict]] = {name: {} for name in ("model", "agent", "mission", "workflow")}
+    periods: dict[str, dict[str, Any]] = {name: {"booked_cost_minor": 0, "ai_booked_cost_minor": 0, "provider_reported_usd": Decimal(0)}
+               for name in ("today", "calendar_month", "rolling_30d", "all_time")}
+    history = []
+    reserved = 0
+    ai_reserved = 0
+    for entry in tx.list("budget_entry"):
+        if entry.get("state") not in {"RESERVED", "SETTLED", "ACTUAL"}:
+            continue
+        pending = entry["state"] == "RESERVED"
+        trace = traces.get(entry["id"], {})
+        result = results.get(trace.get("id"), {})
+        model = entry.get("model") or trace.get("model") or "unattributed"
+        role = entry.get("role") or entry.get("agent_role") or trace.get("role") or "unattributed"
+        mission = entry.get("mission_id") or trace.get("mission_id") or "unattributed"
+        workflow = entry.get("workflow_id", "unattributed")
+        booked = 0 if pending else int(entry.get("actual_sek_minor", 0))
+        liability = int(entry.get("reserved_sek_minor", 0)) if pending else 0
+        reported = None
+        raw = result.get("reported_cost_usd")
+        if raw is not None:
+            try:
+                value = Decimal(str(raw))
+                if value.is_finite() and 0 <= value <= 10**10:
+                    reported = value
+            except (InvalidOperation, ValueError):
+                pass
+        reserved += liability
+        ai_reserved += liability if entry.get("category") == "ai" else 0
+        timestamp = entry.get("created_at", 0)
+        for name, threshold in (("today", day_start), ("calendar_month", month_start),
+                                ("rolling_30d", tx.now - MONTH), ("all_time", 0)):
+            if not pending and timestamp >= threshold:
+                periods[name]["booked_cost_minor"] += booked
+                if entry.get("category") == "ai":
+                    periods[name]["ai_booked_cost_minor"] += booked
+                    periods[name]["provider_reported_usd"] += reported or Decimal(0)
+        for name, label in (("model", model), ("agent", role), ("mission", mission), ("workflow", workflow)):
+            if name in {"model", "agent"} and entry.get("category") != "ai":
+                continue
+            group = groups[name].setdefault(str(label), {"id": str(label), "booked_cost_minor": 0,
+                "reserved_cost_minor": 0, "input_tokens": 0, "output_tokens": 0, "booked_calls": 0,
+                "provider_reported_usd": Decimal(0), "reported_cost_count": 0})
+            group["booked_cost_minor"] += booked
+            group["reserved_cost_minor"] += liability
+            if not pending:
+                for field in ("input_tokens", "output_tokens"):
+                    group[field] += int(entry.get(field, 0))
+                group["booked_calls"] += int(entry.get("calls", 0))
+                if reported is not None:
+                    group["provider_reported_usd"] += reported
+                    group["reported_cost_count"] += 1
+        history.append({"id": entry["id"], "state": entry["state"], "category": entry.get("category"),
+            "vendor": entry.get("vendor"), "workflow_id": workflow, "mission_id": mission, "role": role, "model": model,
+            "created_at": timestamp, "booked_cost_minor": booked, "reserved_cost_minor": liability,
+            "provider_reported_usd": str(reported) if reported is not None else None,
+            "input_tokens": int(entry.get("input_tokens", 0)), "output_tokens": int(entry.get("output_tokens", 0)),
+            "fx": entry.get("fx"), "trace_id": trace.get("id"), "reconciliation": entry.get("reconciliation", False)})
+    return {"currency": "SEK", "provider_currency": "USD", "timezone": "Europe/Stockholm",
+        "periods": {name: {**values, "provider_reported_usd": str(values["provider_reported_usd"])} for name, values in periods.items()},
+        "booked_cost_minor": periods["all_time"]["booked_cost_minor"], "reserved_cost_minor": reserved,
+        "ai_reserved_cost_minor": ai_reserved, "ai_limits": ai_limits(tx),
+        **{"by_" + name: [{**values, "provider_reported_usd": str(values["provider_reported_usd"])}
+                           for values in sorted(rows.values(), key=lambda row: (-row["booked_cost_minor"], row["id"]))]
+           for name, rows in groups.items()},
+        "history": sorted(history, key=lambda row: (row["created_at"], row["id"]), reverse=True)[:500],
+        "estimated_future_revenue_minor": None,
+        "accounting_note": "Reported USD is separate from booked SEK; no price estimate, draft or synthetic receipt is revenue."}

@@ -2,10 +2,10 @@
 
 (() => {
   const byId = (id) => document.getElementById(id);
-  const state = { user: null, csrf: null, data: null, v12: null, crm: null, crmQuery: null, refreshing: false, toastTimer: null };
+  const state = { user: null, csrf: null, data: null, v12: null, crm: null, crmQuery: null, refreshing: false, toastTimer: null, detailCache: {}, detailLoading: null, detailGeneration: 0 };
   const money = new Intl.NumberFormat("sv-SE", { style: "currency", currency: "SEK", minimumFractionDigits: 0, maximumFractionDigits: 2 });
   const integer = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 0 });
-  const dateFormat = new Intl.DateTimeFormat("sv-SE", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const dateFormat = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Stockholm", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   const roleNames = { admin: "Administratör", operator: "Operatör", viewer: "Läsbehörighet" };
   const statusNames = {
     DISCOVERED: "Identifierad", RESEARCHED: "Analyserad", QUALIFIED: "Kvalificerad",
@@ -20,11 +20,15 @@
     DRAFT: "Utkast", APPROVED: "Godkänd", REQUESTED: "Begäran skapad", INITIATED: "Betalning inledd",
     CONFIRMED: "Betalning bekräftad", SENT: "Skickad", DELIVERED: "Levererad", PENDING: "Väntar", DONE: "Klar",
     RESOLVED: "Granskad", SUPERSEDED: "Sammanförd", BLOCKED: "Spärrad", REVIEW_REQUIRED: "Kräver granskning",
-    IDLE: "Ledig", BUSY: "Arbetar", WAITING: "Väntar", READY: "Redo", TEST_ARTIFACT: "Äldre testartefakt",
+    IDLE: "Ledig", WORKING: "Arbetar", ERROR: "Fel / granskas", BUSY: "Arbetar", WAITING: "Väntar", READY: "Redo", TEST_ARTIFACT: "Äldre testartefakt",
     APPROVED_INTERNAL: "Internt granskad · oskickad", NEEDS_REVIEW: "Behöver granskas", QUALITY_REVIEW: "Kvalitetsgranskning"
   };
   const jobNames = { demo_journey: "Simulerad kundresa", research: "Leadanalys", qualify: "Kvalificering", follow_up: "Uppföljning", daily_report: "Daglig rapport", pipeline_advance: "Förbered nästa affärssteg", source_research: "Granska tillåten researchkälla" };
   const errorNames = {
+    ai_json_invalid: "AI-svaret gick inte att läsa som fullständig JSON. Det sparade felet kan granskas utan att säkerhetsgränser ändras.",
+    ai_schema_invalid: "AI-svaret saknar uppgifter som krävs för detta delsteg. Högst en budgetkontrollerad formatkorrigering tillåts.",
+    ai_policy_violation: "AI-svaret föreslog en otillåten handling. Automatisk formatkorrigering kan inte godkänna den.",
+    ai_provider_response_invalid: "Leverantören returnerade ett ogiltigt svar. Kontrollera det spårbara anropsutfallet och kostnaden.",
     admin_required: "Åtgärden kräver administratörsbehörighet.",
     unauthorized: "Din session har löpt ut. Logga in igen.",
     authentication_failed: "E-postadressen eller lösenordet stämmer inte.",
@@ -144,7 +148,7 @@
     if (["QUALIFIED", "READY_TO_CONTACT", "COMPLETED", "DELIVERY_VERIFIED", "CONFIRMED", "PAYMENT_CONFIRMED", "DONE", "ACCEPTED", "APPROVED"].includes(upper)) color = "success";
     else if (["FAILED", "PAYMENT_FAILED", "DELIVERY_FAILED", "REJECTED", "CANCELLED", "UNSUBSCRIBED"].includes(upper)) color = "danger";
     else if (["MANUAL_REVIEW", "PAUSED", "UNCERTAIN", "PAYMENT_APPROVAL_REQUIRED", "DRAFT"].includes(upper)) color = "warning";
-    else if (["RESEARCHED", "CONTACTED", "REPLIED", "PROPOSAL_SENT", "REQUESTED", "INITIATED", "QUEUED", "LEASED", "RUNNING"].includes(upper)) color = "blue";
+    else if (["RESEARCHED", "CONTACTED", "REPLIED", "PROPOSAL_SENT", "REQUESTED", "INITIATED", "QUEUED", "LEASED", "RUNNING", "WORKING"].includes(upper)) color = "blue";
     return el("span", "badge badge-" + color, forcedText || statusLabel(upper));
   }
   function cell(content, className) {
@@ -244,7 +248,7 @@
     const sourceBox = byId("sources-list");
     sourceBox.replaceChildren();
     text("sources-count", sources.length);
-    if (!sources.length) sourceBox.append(el("p", "empty-state", "Inga v1.1-källor har granskats ännu. Befintliga leads bevaras och klassificeras separat."));
+    if (!sources.length) sourceBox.append(el("p", "empty-state", "Inga källor har granskats ännu. Befintliga leads bevaras och klassificeras separat."));
     for (const source of sources) {
       const item = el("div", "source-item");
       const heading = el("div", "task-heading");
@@ -261,6 +265,7 @@
         byId("import-lead-dialog").showModal();
         byId("import-company").focus();
       }, { disabled: !isAdmin() }));
+      if (source.kind === "https_json" && source.approved) item.append(actionButton("Hämta granskat underlag", async (button) => { if (!window.confirm("Hämta endast denna uttryckligen godkända källa inom dess dokumenterade kostnad? Servern kontrollerar nätverksbehörighet, adress och budget.")) return; await mutate(button, "/api/research/sources/" + encodeURIComponent(source.id) + "/fetch", { idempotency_key: key("source-fetch") }, "Hämtningsresultatet är registrerat. Granska källa och kvalitet innan användning."); }, { disabled: !isAdmin() || isKilled() || !source.fetch_enabled }));
       sourceBox.append(item);
     }
     const outreach = v.outreach || {};
@@ -268,16 +273,16 @@
     const contactEnabled = false;
     text("contact-gate-badge", contactEnabled ? "Separat kontaktgodkännande finns" : "Kundkontakt spärrad");
     byId("contact-gate-badge").className = "badge badge-" + (contactEnabled ? "warning" : "neutral");
-    text("outreach-state", "Spärrad i v1.2");
+    text("outreach-state", "Spärrad i v1.3");
     summaryRows("outreach-summary", [
       ["Leverantör", first(outreach.provider, outreach.config?.provider, "Brevo · kräver granskning")],
       ["Domänunderlag", checks.reviewed_domain_evidence === true ? "Operatörsgranskat underlag registrerat" : "Operatörsgranskning krävs"],
       ["Avsändare & juridisk policy", checks.reviewed_sender_and_lawful_policy === true ? "Granskningsreferens registrerad" : "Ej godkänd"],
       ["Testomfattning", outreach.test_scope === "isolated_offline_safety_probe" ? "Isolerad offlinekontroll · inte leveranstest" : "Separat testunderlag krävs"],
-      ["Serverns kontaktspärr", "Permanent spärrad i v1.2"],
-      ["Betalningsåtgärder", "Permanent spärrade i v1.2 · historik bevaras"]
+      ["Serverns kontaktspärr", "Permanent spärrad i v1.3"],
+      ["Betalningsåtgärder", "Permanent spärrade i v1.3 · historik bevaras"]
     ]);
-    text("preparation-status", "Godkända källor, verkliga leads och interna AI-utkast kan förberedas. Verkliga kundutskick och betalningar är spärrade i v1.2, även om äldre runtime-inställningar finns.");
+    text("preparation-status", "Godkända källor, verkliga leads och interna AI-utkast kan förberedas. Verkliga kundutskick och betalningar är spärrade i v1.3, även om äldre runtime-inställningar finns.");
     byId("preparation").classList.toggle("version-unavailable", !data.v11);
   }
 
@@ -426,7 +431,7 @@
     for (const payment of pending.slice(0, 4)) {
       const card = el("div", "approval-item");
       const detail = el("div");
-      detail.append(el("strong", "", payment.provider === "demo" ? "Godkänn simulerad betalningsbegäran" : "Historiskt betalningsbeslut · spärrat i v1.2"), el("p", "", first(payment.reference, payment.customer_name, payment.id.slice(0, 8)) + " · " + amount(payment.total_minor ?? payment.amount_minor) + " inkl. moms"));
+      detail.append(el("strong", "", payment.provider === "demo" ? "Godkänn simulerad betalningsbegäran" : "Historiskt betalningsbeslut · spärrat i v1.3"), el("p", "", first(payment.reference, payment.customer_name, payment.id.slice(0, 8)) + " · " + amount(payment.total_minor ?? payment.amount_minor) + " inkl. moms"));
       card.append(detail, paymentButton(payment, "approve"));
       box.append(card);
     }
@@ -439,7 +444,7 @@
     }
   }
   function paymentButton(payment, action) {
-    if (payment.provider !== "demo") return el("span", "muted small", "Betalningsåtgärder spärrade i v1.2");
+    if (payment.provider !== "demo") return el("span", "muted small", "Betalningsåtgärder spärrade i v1.3");
     const options = { disabled: !isAdmin() || isKilled(), primary: action === "approve" };
     if (action === "approve") return actionButton("Godkänn", async (button) => {
       const label = amount(first(payment.total_minor, payment.amount_minor));
@@ -598,7 +603,7 @@
     const connectionBox = byId("connections-list");
     connectionBox.replaceChildren();
     const connections = data.connections || {};
-    const connectionRows = [["Databas", first(connections.database, "Beständig databas")], ["Jobbkö", first(connections.queue, "Databasbaserad")], ["AI-leverantör", aiStatus().effective_paid_enabled ? "OpenRouter · separat godkända betalda interna anrop" : "Betalda interna anrop spärrade · se AI-kontroller"], ["E-post", "Verkliga utskick spärrade i v1.2"], ["Betalningar", "Verkliga betalningsåtgärder spärrade i v1.2"], ["Din behörighet", roleNames[state.user?.role] || state.user?.role || "—"]];
+    const connectionRows = [["Databas", first(connections.database, "Beständig databas")], ["Jobbkö", first(connections.queue, "Databasbaserad")], ["AI-leverantör", aiStatus().effective_paid_enabled ? "OpenRouter · separat godkända betalda interna anrop" : "Betalda interna anrop spärrade · se AI-kontroller"], ["E-post", "Verkliga utskick spärrade i v1.3"], ["Betalningar", "Verkliga betalningsåtgärder spärrade i v1.3"], ["Din behörighet", roleNames[state.user?.role] || state.user?.role || "—"]];
     for (const [label, value] of connectionRows) {
       const safeValue = typeof value === "boolean" ? value ? "Konfigurerad" : "Ej konfigurerad" : typeof value === "object" ? first(value.status, value.mode, value.configured ? "Konfigurerad" : "Ej konfigurerad") : value;
       connectionBox.append(el("dt", "", label), el("dd", "", safeValue));
@@ -623,11 +628,7 @@
     if (value === undefined || value === null) return "Inget resultat registrerat.";
     return typeof value === "object" ? JSON.stringify(value, null, 2) : String(value);
   }
-  function resultDetails(label, value, open = false) {
-    const details = el("details", "output-details"); details.open = open;
-    details.append(el("summary", "", label), el("pre", "output-text", outputText(value)));
-    return details;
-  }
+
   function chart(id, points, field, label, monetary = false) {
     const target = byId(id); target.replaceChildren();
     if (!points.length) { target.append(el("p", "empty-state", "Ingen registrerad tidsserie ännu. Ingen aktivitet uppskattas eller simuleras.")); return; }
@@ -653,7 +654,7 @@
   function renderEngine() {
     const v = state.v12;
     for (const section of document.querySelectorAll(".v12-section")) section.classList.toggle("version-unavailable", !v);
-    text("engine-status", v ? "Databasregistrerad aktivitet" : "v1.2-API saknas");
+    text("engine-status", v ? "Databasregistrerad aktivitet" : "v1.3-API saknas");
     if (!v) return;
     const metrics = v.metrics || {}, totals = metrics.totals || metrics;
     const metricsBox = byId("engine-metrics"); metricsBox.replaceChildren();
@@ -710,7 +711,7 @@
     if (!orders.length) target.append(el("p", "empty-state", "Inga beställningar ännu. En beställning skapar ingen extern leverans."));
     for (const order of orders) {
       const card = el("article", "panel factory-order"); const header = el("div", "panel-heading");
-      header.append(el("h3", "", serviceNames[first(order.type, order.service_type, order.kind)] || first(order.type, "Digital leverabel")), badge(asStatus(order))); card.append(header, el("p", "", order.brief), el("p", "muted small", order.id + " · " + date(order.created_at)));
+      header.append(el("h3", "", typeName(first(order.type, order.service_type, order.kind))), badge(asStatus(order))); card.append(header, el("p", "", order.brief), el("p", "muted small", order.id + " · " + date(order.created_at)));
       if (order.blocker || order.blocked_reason || order.error_code) card.append(el("p", "inline-feedback", first(order.blocker, order.blocked_reason, order.error_code)));
       const orderResults = results.filter((result) => result.order_id === order.id).concat(list(order.results));
       const actions = el("div", "button-row");
@@ -720,7 +721,7 @@
       for (const result of orderResults) {
         const block = el("div", "factory-result"); block.append(badge(asStatus(result)), resultDetails("Resultat · innehåll, källor och spårning", first(result.document, result.content, result.output, result), true));
         const resultActions = el("div", "button-row");
-        for (const format of ["markdown", "json"]) { const link = el("a", "button button-small button-secondary", "Exportera " + (format === "markdown" ? "Markdown" : "JSON")); link.href = "/api/factory/results/" + encodeURIComponent(result.id) + "/export?format=" + format; link.setAttribute("download", ""); resultActions.append(link); }
+        for (const format of ["markdown", "json"]) { const link = el("a", "button button-small button-secondary", "Exportera " + (format === "markdown" ? "Markdown" : "JSON")); link.href = "/api/deliverables/" + encodeURIComponent(result.id) + "/export?format=" + format; link.setAttribute("download", ""); resultActions.append(link); }
         if (!["APPROVED", "REJECTED"].includes(asStatus(result))) for (const [label, decision] of [["Godkänn internt resultat", "approve"], ["Begär omarbetning", "reject"]]) resultActions.append(actionButton(label, async (button) => { const reason = window.prompt("Beskriv granskningen av källor, kvalitet och osäkerheter. Ingen kundkontakt godkänns.", ""); if (!reason || reason.trim().length < 12) return; await mutate(button, "/api/factory/results/" + encodeURIComponent(result.id) + "/review", { decision, reason: reason.trim() }, "Resultatgranskningen är registrerad."); }, { disabled: !isAdmin() }));
         block.append(resultActions); card.append(block);
       }
@@ -731,7 +732,7 @@
   }
   function renderSalesOffers(offers) {
     let panel = byId("sales-offers");
-    if (!panel) { panel = el("article", "panel agent-history"); panel.id = "sales-offers"; byId("crm").append(panel); }
+    if (!panel) { panel = el("article", "panel agent-history"); panel.id = "sales-offers"; byId("research-sales-offers").append(panel); }
     panel.replaceChildren(el("h3", "", "Interna offertutkast · inga utskick"));
     if (!list(offers).length) panel.append(el("p", "empty-state", "Inga verkliga AI-offertutkast har skapats. Ett köat jobb räknas inte som ett färdigt utkast."));
     for (const offer of list(offers)) {
@@ -826,8 +827,8 @@
   function render(data) {
     state.data = data;
     state.v12 = data.v12 || state.v12;
-    renderMetrics(data); renderBudget(data); renderLeads(data); renderApprovals(data); renderPayments(data); renderJobs(data); renderSecurity(data); renderPreparation(data); renderEngine(); applyPermissions();
-    text("last-updated", "Uppdaterad " + new Intl.DateTimeFormat("sv-SE", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date()));
+    renderMetrics(data); renderBudget(data); renderLeads(data); renderApprovals(data); renderPayments(data); renderJobs(data); renderSecurity(data); renderPreparation(data); renderEngine(); renderV13(); applyPermissions();
+    text("last-updated", "Uppdaterad " + new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Stockholm", hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date()));
   }
   async function refresh() {
     if (!state.user || state.refreshing) return;
@@ -836,11 +837,11 @@
     try {
       const data = await api("/api/dashboard");
       if (!data.v12) {
-        try { state.v12 = await api("/api/v1.2/overview"); }
+        try { state.v12 = await api("/api/v1.3/overview"); }
         catch (error) { if (!state.user) throw error; state.v12 = null; }
       }
       if (state.crmQuery) state.crm = await api("/api/crm/leads?" + state.crmQuery);
-      if (state.user) render(data);
+      if (state.user) { state.detailCache = {}; state.detailLoading = null; state.detailGeneration++; render(data); }
     }
     catch (error) { if (state.user) showError(error.message); }
     finally { state.refreshing = false; byId("refresh-button").removeAttribute("aria-busy"); }
@@ -952,7 +953,8 @@
   });
   byId("mission-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const result = await mutate(byId("mission-submit"), "/api/missions", { idempotency_key: key("mission"), goal: byId("mission-goal").value.trim(), source_ids: ids(byId("mission-sources").value), lead_ids: ids(byId("mission-leads").value), deliverable_kind: byId("mission-type").value, max_cost_minor: Math.round(Number(byId("mission-cost").value) * 100), priority: byId("mission-priority").value }, "Det interna uppdraget är registrerat. Agenternas steg och eventuella blockeringar visas i kontrollcentret.");
+    const result = await mutate(byId("mission-submit"), "/api/missions", { idempotency_key: key("mission"), goal: byId("mission-goal").value.trim(), source_ids: ids(byId("mission-sources").value), lead_ids: ids(byId("mission-leads").value), deliverable_kind: byId("mission-type").value, max_cost_minor: Math.round(Number(byId("mission-cost").value) * 100), priority: byId("mission-priority").value, deadline_seconds: Number(byId("mission-deadline").value) * 60, max_steps: Number(byId("mission-steps").value), max_retries: Number(byId("mission-retries").value), max_revisions: Number(byId("mission-revisions").value) }, "Uppdraget är registrerat. Följ agenternas steg, resultat och kostnader i uppdragsvyn.");
+    if (result?.id) navigate("/missions/" + encodeURIComponent(result.id));
     text("mission-feedback", result ? "Registrerat uppdrag: " + first(result.id, result.mission?.id, "se Agent Control Center") + " · " + statusLabel(asStatus(result.mission || result)) : "Uppdraget kunde inte skapas. Se serverns blockeringsorsak ovan. Ingen pågående aktivitet antas.");
   });
   async function loadCRM() {
@@ -966,7 +968,7 @@
   });
   byId("internal-schedule-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const result = await saveConfig("internal-schedule-form", "schedule-submit", "/api/internal/schedules/" + encodeURIComponent(byId("schedule-id").value.trim()), { enabled: byId("schedule-enabled").checked, kind: byId("schedule-kind").value, cadence: byId("schedule-cadence").value, daily_at: byId("schedule-time").value, interval_minutes: Number(byId("schedule-interval").value), max_runs_per_day: Number(byId("schedule-runs").value), max_cost_minor: Math.round(Number(byId("schedule-cost").value) * 100), timezone: "Europe/Stockholm", goal: byId("schedule-goal").value.trim(), source_ids: ids(byId("schedule-sources").value), order_id: byId("schedule-order").value.trim(), lead_id: byId("schedule-lead").value.trim(), reason: byId("schedule-reason").value.trim() }, "Det interna schemat är granskat och sparat.");
+    const result = await saveConfig("internal-schedule-form", "schedule-submit", "/api/internal/schedules/" + encodeURIComponent(byId("schedule-id").value.trim()), { enabled: byId("schedule-enabled").checked, kind: byId("schedule-kind").value, cadence: byId("schedule-cadence").value, weekday: Number(byId("schedule-weekday").value), max_cost_per_run_minor: Math.round(Number(byId("schedule-run-cost").value) * 100), daily_at: byId("schedule-time").value, interval_minutes: Number(byId("schedule-interval").value), max_runs_per_day: Number(byId("schedule-runs").value), max_cost_minor: Math.round(Number(byId("schedule-cost").value) * 100), timezone: "Europe/Stockholm", goal: byId("schedule-goal").value.trim(), source_ids: ids(byId("schedule-sources").value), order_id: byId("schedule-order").value.trim(), lead_id: byId("schedule-lead").value.trim(), reason: byId("schedule-reason").value.trim() }, "Det interna schemat är granskat och sparat.");
     text("schedule-feedback", result ? "Schema " + result.id + " · " + (result.enabled ? "aktivt internt schema" : "avstängt") + " · nästa planerade tid " + date(result.next_run_at) : "Schemat blockerades. Se serverns felmeddelande.");
   });
   byId("agent-role-cards").addEventListener("submit", async (event) => {
@@ -974,21 +976,212 @@
     event.preventDefault(); const fields = new FormData(form), payload = { enabled: fields.get("enabled") === "on", reason: fields.get("reason"), tools: fields.getAll("tools") };
     for (const name of ["priority", "per_call_limit_minor", "daily_budget_minor", "max_calls_per_day"]) payload[name] = Number(fields.get(name));
     const result = await mutate(form.querySelector("button"), "/api/agents/" + encodeURIComponent(form.dataset.role) + "/config", payload, "Rollens interna begränsningar är sparade. Inga externa befogenheter har lagts till.");
-    if (result) { delete form.dataset.dirty; document.activeElement.blur(); renderAgents(state.v12?.agents || {}); }
+    if (result) { delete form.dataset.dirty; document.activeElement.blur(); renderAgents(state.v12?.agents || {}); renderAgentViews(); }
   });
   byId("agents-refresh").addEventListener("click", refresh);
-  function selectPage() {
-    const agentsPage = location.pathname.replace(/\/$/, "") === "/agents";
-    if (agentsPage) for (const brand of document.querySelectorAll("a.brand")) brand.href = "/#overview";
-    for (const section of document.querySelectorAll(".page-section")) section.hidden = agentsPage ? section.id !== "agent-center" : section.id === "agent-center";
-    for (const link of document.querySelectorAll(".navigation .nav-link")) {
-      const href = link.getAttribute("href");
-      if (agentsPage && href.startsWith("#")) link.href = "/" + href;
-      link.classList.toggle("active", agentsPage ? link.id === "agents-navigation" : href === (location.hash || "#overview"));
-      if (link.classList.contains("active")) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current");
-    }
-    const heading = document.querySelector(".breadcrumb strong"); if (heading) heading.textContent = agentsPage ? "Agent Control Center" : "Kontrollpanel";
+  // v1.3: one addressable workspace view at a time. All counters use persisted data.
+  const navigation = {
+    overview: { title: "Översikt", base: "/", tabs: [] },
+    agents: { title: "AI-agenter", base: "/agents", tabs: [["overview", "Översikt"], ["workflows", "Arbetsflöden"], ["activity", "Aktivitet"], ["history", "Historik"]] },
+    missions: { title: "Uppdrag", base: "/missions", tabs: [["active", "Aktiva"], ["waiting", "Väntande"], ["completed", "Slutförda"], ["archive", "Arkiv"]] },
+    research: { title: "Research & Leads", base: "/research", tabs: [["leads", "Leads"], ["sources", "Källor"], ["reports", "Analyser"]] },
+    deliverables: { title: "Leverabler", base: "/deliverables", tabs: [["library", "Bibliotek"], ["new", "Ny beställning"]] },
+    finance: { title: "Ekonomi", base: "/finance", tabs: [["overview", "Översikt"], ["costs", "Kostnader"], ["budget", "Budget"]] },
+    settings: { title: "Inställningar", base: "/settings", tabs: [["ai", "AI & modeller"], ["integrations", "API & integrationer"], ["budget", "Bokföring"], ["security", "Säkerhet"], ["schedules", "Schemaläggning"], ["logs", "Systemloggar"]] }
+  };
+  const fieldLabels = { output: "AI-svar", provider: "Leverantör", model: "Modell", input_tokens: "Indata, token", output_tokens: "Utdata, token", reported_cost_usd: "Leverantörens rapporterade kostnad, USD", cost_sek_minor: "Bokförd AI-kostnad", amount_minor: "Nettobelopp", total_minor: "Totalt inklusive moms", vat_minor: "Moms", list_price_minor: "Listpris", discount_bps: "Rabatt i hundradels procent", source_ids: "Källhänvisningar", summary: "Sammanfattning", text: "Analys", reason: "Bedömning", title: "Titel", goal: "Affärsmål", objective: "Deluppgift", status: "Status", tasks: "Deluppgifter", role: "Agent", next_actions: "Nästa steg", next_action: "Rekommenderat nästa steg", limitations: "Osäkerheter & begränsningar", uncertainties: "Osäkerheter", risks: "Risker", findings: "Iakttagelser", recommendations: "Rekommendationer", content: "Innehåll", sources: "Källor", citations: "Källhänvisningar", evidence: "Underlag", possible_need: "Möjligt behov · hypotes", score: "Bedömning", fit_reason: "Varför erbjudandet passar", email_subject: "Ämne · oskickat", email_body: "Meddelande · oskickat", follow_up_plan: "Intern uppföljningsplan", price: "Prisunderlag", facts: "Faktaunderlag", estimated_cost_minor: "Uppskattad kostnad", estimated_revenue_minor: "Uppskattad framtida intäkt, öre", quality: "Kvalitetsgranskning", issues: "Granskningspunkter", sections: "Avsnitt", subject: "Ämne", predicate: "Uppgift", value: "Värde", values: "Motstridiga värden", target_group: "Målgrupp", problem: "Kundproblem", price_estimate_minor: "Preliminärt pris · inte intäkt", cost_estimate_minor: "Uppskattad kostnad", next_steps: "Nästa interna steg", company: "Företag", company_ids: "Källbelagda företag", package_name: "Tjänstepaket", analysis: "Analys", needs_revision: "Revision behövs", conclusion: "Slutsats", opportunities: "Affärsmöjligheter", business_idea: "Affärsidé", target_audience: "Målgrupp", customer_problem: "Kundproblem", solution: "Föreslagen lösning", pricing_model: "Preliminär prismodell", competition: "Konkurrensläge", assumptions: "Antaganden" };
+  function routeInfo() {
+    const parts = location.pathname.split("/").filter(Boolean).map((part) => { try { return decodeURIComponent(part); } catch { return part; } });
+    const group = navigation[parts[0]] ? parts[0] : "overview", config = navigation[group];
+    const sub = group === "deliverables" && parts[1] === "list" ? "library" : parts[1] || config.tabs[0]?.[0] || "overview";
+    const detail = ["missions", "agents", "deliverables"].includes(group) && !config.tabs.some(([id]) => id === sub) && sub !== "new";
+    return { group, sub, detail, config, panel: group === "overview" ? "overview" : group + "/" + (detail ? "detail" : sub) };
   }
+  function routeLink(label, path, className = "text-link") {
+    const link = el("a", className, label); link.href = path; link.dataset.route = path; return link;
+  }
+  function navigate(path, replace = false) {
+    const url = new URL(path, location.origin);
+    if (url.origin !== location.origin) return;
+    if (replace) history.replaceState({}, "", url.pathname + url.search); else history.pushState({}, "", url.pathname + url.search);
+    selectPage(); renderV13(); document.documentElement.scrollTop = 0;
+    byId("main").focus({ preventScroll: true });
+    byId("app-shell").classList.remove("mobile-nav-open"); byId("mobile-menu").setAttribute("aria-expanded", "false"); syncNavigationLayout();
+  }
+  function selectPage() {
+    const info = routeInfo();
+    for (const section of document.querySelectorAll(".route-panel")) section.hidden = section.dataset.panel !== info.panel;
+    if (!document.querySelector('.route-panel[data-panel="' + info.panel + '"]')) byId("view-overview").hidden = false;
+    text("route-title", info.config.title); document.title = info.config.title + " · Jarvis · Ignitic";
+    for (const link of document.querySelectorAll(".navigation .nav-link")) { const active = link.dataset.route === info.config.base; link.classList.toggle("active", active); if (active) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current"); }
+    const tabs = byId("view-tabs"); tabs.replaceChildren(); tabs.hidden = !info.config.tabs.length;
+    for (const [id, label] of info.config.tabs) { const link = routeLink(label, info.config.base + "/" + id, "view-tab"); if (id === info.sub || info.detail && id === info.config.tabs[0][0]) { link.classList.add("active"); link.setAttribute("aria-current", "page"); } tabs.append(link); }
+    for (const card of byId("agent-role-cards").children) card.hidden = !info.detail || card.querySelector("form")?.dataset.role !== info.sub;
+  }
+  function parsedText(value) {
+    if (typeof value !== "string") return value;
+    try { const parsed = JSON.parse(value); if (parsed && typeof parsed === "object") return parsed; } catch { /* Plain prose is displayed as text. */ }
+    return value;
+  }
+  function humanContent(value, depth = 0) {
+    const box = el("div", "human-content");
+    value = parsedText(value);
+    if (value === null || value === undefined) { box.append(el("p", "muted", "Inget underlag registrerat.")); return box; }
+    if (typeof value !== "object") { box.append(el("p", "prose", String(value))); return box; }
+    if (depth > 4) { box.append(el("p", "muted", "Mer underlag finns under tekniska detaljer.")); return box; }
+    if (Array.isArray(value)) { const ul = el("ul", "content-list"); for (const item of value.slice(0, 30)) { const li = el("li"); li.append(humanContent(item, depth + 1)); ul.append(li); } if (!value.length) box.append(el("p", "muted", "Inga registrerade uppgifter.")); else box.append(ul); return box; }
+    if (value.sections && Array.isArray(value.sections)) {
+      if (value.title) box.append(el("h2", "", value.title));
+      for (const section of value.sections) { const node = el("section", "report-section"); node.append(el("h3", "", first(section.heading, section.key, "Avsnitt")), humanContent(section.content, depth + 1)); if (section.source_ids?.length) node.append(el("p", "source-note", "Underlag: " + section.source_ids.join(", "))); box.append(node); }
+      for (const name of ["next_actions", "limitations", "uncertainties"]) if (value[name]) { box.append(el("h3", "", fieldLabels[name]), humanContent(value[name], depth + 1)); }
+      return box;
+    }
+    const omitted = new Set(["id", "trace_id", "ai_result_id", "reservation_id", "workflow_id", "mission_id", "created_at", "updated_at", "source_version", "input_fingerprint", "evidence_fingerprint", "provider_request_id", "input_hash", "config_revision", "ciphertext", "lease_token"]);
+    let shown = 0;
+    for (const [name, item] of Object.entries(value)) {
+      if (omitted.has(name) || item === null || item === undefined || name.endsWith("_id") || typeof item === "boolean") continue;
+      const label = fieldLabels[name];
+      if (!label && !["status", "message", "body", "subject", "heading", "name", "source_url", "url", "note", "brief"].includes(name)) continue;
+      box.append(el("h4", "", label || ({ body: "Meddelande", subject: "Ämne", message: "Meddelande", source_url: "Källadress", url: "Källadress", note: "Anteckning", brief: "Uppdragsbeskrivning", name: "Namn", heading: "Avsnitt" }[name] || name)), name === "status" ? badge(item) : name.endsWith("_minor") && typeof item === "number" ? el("p", "prose", amount(item)) : humanContent(item, depth + 1)); shown++;
+    }
+    if (!shown) box.append(el("p", "muted", "Registrerat underlag. Full spårning finns under tekniska detaljer."));
+    return box;
+  }
+  function technicalDetails(value) { const details = el("details", "technical-details"); details.append(el("summary", "", "Tekniska detaljer & spårning"), el("pre", "output-text", outputText(value))); return details; }
+  function resultDetails(label, value, open = false) { const details = el("details", "output-details"); details.open = open; details.append(el("summary", "", label), humanContent(value), technicalDetails(value)); return details; }
+  function empty(target, message, action, href) { target.replaceChildren(); const node = el("div", "empty-state"); node.append(el("span", "empty-symbol", "◇"), el("p", "", message)); if (action && href) node.append(routeLink(action, href, "button button-secondary")); target.append(node); }
+  function statCard(label, value, detail, monetary = false) { const card = el("article", "stat-card"); card.append(el("span", "stat-label", label), el("strong", "stat-value", value === undefined || value === null ? "—" : monetary ? amount(value) : value), el("span", "stat-note", detail || "Från beständiga backenddata")); return card; }
+  function latest(records) { return [...list(records)].sort((a, b) => number(first(b.updated_at, b.created_at)) - number(first(a.updated_at, a.created_at))); }
+  function missionRecords() { return list(state.v12?.agents?.missions); }
+  function currentTasks(id) { return list(state.v12?.agents?.tasks).filter((task) => task.mission_id === id); }
+  function resultRecords() { const rows = [...list(state.v12?.services?.results), ...list(state.v12?.reports?.summaries).map((row) => ({ ...row, kind: row.kind || "mission_summary", responsible_agent: "ceo", version: row.version || 1 })), ...Object.values(state.detailCache || {}).filter((row) => row?.id && row?.content)]; return [...new Map(rows.map((row) => [row.id, row])).values()]; }
+  function taskOutput(task) { return first(task.output?.output?.text, task.output?.analysis, task.output?.content, task.output?.output, task.output, task.result); }
+  function missionState(mission) { return String(first(mission.status, mission.state, "QUEUED")).toUpperCase(); }
+  function agentState(role) {
+    const status = String(first(role.status, role.state, "")).toUpperCase().replaceAll(" ", "_");
+    if (["WORKING", "WAITING", "IDLE", "REVIEW_REQUIRED", "ERROR"].includes(status)) return status;
+    // Old servers do not provide a verified activity state. Show idle rather than invent work.
+
+    return "IDLE";
+  }
+  function compactMission(mission) { const row = el("div", "compact-row"); const main = el("div", "row-copy"); main.append(routeLink(mission.goal || "Internt uppdrag", "/missions/" + encodeURIComponent(mission.id), "row-title"), el("span", "row-meta", date(mission.created_at) + " · " + amount(mission.actual_and_pending_cost_minor))); row.append(main, badge(missionState(mission))); return row; }
+  function renderDashboard() {
+    const v = state.v12 || {}, metrics = v.metrics || {}, missions = missionRecords(), roles = list(v.agents?.roles), costs = state.data?.budget || {};
+    const active = missions.filter((m) => ["RUNNING", "QUEUED"].includes(missionState(m))), completed = missions.filter((m) => missionState(m) === "COMPLETED");
+    const stats = byId("dashboard-stats"); stats.replaceChildren(statCard("Aktiva agenter", roles.filter((role) => agentState(role) === "WORKING").length, "Endast faktiskt pågående jobb"), statCard("Pågående uppdrag", active.length, "Aktiva och köade uppdrag"), statCard("Slutförda uppdrag", completed.length, "Registrerade slutföranden"), statCard("Väntande godkännanden", first(metrics.pending_approvals, list(v.agents?.proposals).filter((p) => asStatus(p) === "PENDING").length), "Kräver ett uttryckligt beslut"), statCard("AI-kostnad idag", metrics.ai_cost_today_minor, "Bokförd kostnad · SEK", true), statCard("Budget kvar", first(metrics.budget_remaining_minor, costs.remaining_minor?.total), "Efter kostnader & reserveringar", true));
+    const target = byId("dashboard-missions"); target.replaceChildren(); for (const mission of latest(active).slice(0, 4)) target.append(compactMission(mission)); if (!active.length) empty(target, "Inga pågående uppdrag. Börja med ett tydligt affärsmål.", "Skapa uppdrag", "/missions/new");
+    const agents = byId("dashboard-agents"); agents.replaceChildren(); for (const role of roles) { const row = el("div", "compact-row"); const name = el("div", "agent-compact-name"); name.append(el("span", "role-symbol", (agentNames[role.role] || role.role).slice(0, 1)), routeLink(agentNames[role.role] || role.role, "/agents/" + role.role)); row.append(name, badge(agentState(role))); agents.append(row); } if (!roles.length) empty(agents, "Agentstatus har inte hämtats ännu.");
+    const results = byId("dashboard-deliverables"); results.replaceChildren(); for (const result of latest(resultRecords()).slice(0, 3)) { const row = el("div", "compact-row"); const main = el("div", "row-copy"); main.append(routeLink(result.title || "Intern leverabel", "/deliverables/" + encodeURIComponent(result.id), "row-title"), el("span", "row-meta", typeName(result.kind) + " · version " + result.version)); row.append(main, badge(asStatus(result))); results.append(row); } if (!resultRecords().length) empty(results, "Inga AI-genererade leverabler ännu. Blockerat arbete skapar inga påhittade resultat.");
+    const events = byId("dashboard-events"); events.replaceChildren(); for (const event of latest(state.data?.audit).slice(0, 5)) { const row = el("div", "event-row"); row.append(el("span", "event-dot"), el("div", "row-copy")); row.lastChild.append(el("strong", "small", eventName(first(event.action, event.event, "Registrerad systemhändelse"))), el("span", "row-meta", date(first(event.created_at, event.at)))); events.append(row); } if (!list(state.data?.audit).length) empty(events, "Inga systemhändelser tillgängliga.");
+    chart("dashboard-cost-chart", list(metrics.series), (p) => p.ai_cost_minor, "Bokförd AI-kostnad per dag", true);
+    chart("dashboard-mission-chart", list(metrics.mission_series), (p) => p.completed, "Slutförda uppdrag per dag");
+  }
+  function eventName(name) { return { login_succeeded: "Intern inloggning", secret_updated: "Serverhemlighet uppdaterad", "policy.rejected": "Behörighetskontroll registrerad", "upgrade.v11_applied": "Tidigare kompatibel uppgradering", "upgrade.v12_applied": "Tidigare kompatibel uppgradering", "mission.created": "Nytt internt uppdrag", "agent.task_finished": "Agentsteg registrerat", "ai.task_finished": "AI-anrop registrerat", "job.enqueued": "Internt jobb köat", "job.completed": "Jobb slutfört", "mission.paused": "Uppdrag pausat", "mission.resumed": "Uppdrag återupptaget", "agent.action_reviewed": "Internt resultat granskat", "auth.login": "Inloggning registrerad", "upgrade.v13_applied": "Kompatibel versionsuppgradering" }[name] || String(name).replaceAll("_", " ").replaceAll(".", " · "); }
+  function typeName(kind) { return first(list(state.v12?.catalogue || state.v12?.services?.types).find((row) => row.id === kind)?.name, serviceNames[kind], { competitor_analysis: "Konkurrentanalys", business_plan: "Affärsplan", research_report: "Researchrapport", lead_report: "Leadrapport", proposal_draft: "Offertutkast", action_plan: "Handlingsplan", financial_analysis: "Ekonomisk analys", opportunity_report: "Affärsmöjligheter" }[kind], kind, "Intern rapport"); }
+  function renderMissionLists() {
+    const all = missionRecords();
+    for (const group of ["active", "waiting", "completed", "archive"]) {
+      const target = byId("v13-missions-" + group), query = target.parentElement.querySelector(".mission-search")?.value.trim().toLocaleLowerCase("sv") || "";
+      const rows = latest(all).filter((m) => ({ active: ["QUEUED", "RUNNING"], waiting: ["PAUSED", "REVIEW_REQUIRED", "BLOCKED", "UNCERTAIN"], completed: ["COMPLETED"], archive: ["FAILED", "CANCELLED", "COMPLETED"] }[group].includes(missionState(m)))).filter((m) => !query || [m.goal, m.id, ...currentTasks(m.id).map((t) => agentNames[t.role])].join(" ").toLocaleLowerCase("sv").includes(query));
+      target.replaceChildren(); if (!rows.length) { empty(target, query ? "Inga uppdrag matchar sökningen." : "Inga uppdrag i den här vyn.", "Skapa internt uppdrag", "/missions/new"); continue; }
+      for (const mission of rows) { const row = el("article", "mission-list-row"); const title = el("div", "mission-list-title"); title.append(routeLink(mission.goal, "/missions/" + encodeURIComponent(mission.id), "row-title"), el("span", "row-meta", date(mission.created_at) + " · " + mission.id.slice(0, 8))); const progress = currentTasks(mission.id); const done = progress.filter((task) => asStatus(task) === "COMPLETED").length; const meta = el("div", "mission-list-meta"); meta.append(badge(missionState(mission)), el("span", "muted small", done + " / " + progress.length + " registrerade steg"), el("strong", "small", amount(mission.actual_and_pending_cost_minor))); row.append(title, meta); if (mission.blocker?.message) row.append(el("p", "blocker-note", mission.blocker.message)); target.append(row); }
+    }
+  }
+  function missionControls(mission) {
+    const actions = el("div", "button-row"), status = missionState(mission);
+    if (["QUEUED", "RUNNING", "PAUSED", "REVIEW_REQUIRED", "BLOCKED", "FAILED"].includes(status)) {
+      const action = ["QUEUED", "RUNNING"].includes(status) ? "pause" : "resume";
+      if (status !== "REVIEW_REQUIRED") actions.append(actionButton(action === "pause" ? "Pausa uppdrag" : "Granska & återuppta", (button) => missionAction(button, mission, action), { disabled: !isAdmin() || mission.uncertain_outcome || action === "resume" && isKilled() }));
+      actions.append(actionButton("Avbryt uppdrag", (button) => missionAction(button, mission, "cancel"), { disabled: !isAdmin() || mission.uncertain_outcome }));
+    }
+    const proposal = list(state.v12?.agents?.proposals).find((p) => p.mission_id === mission.id && asStatus(p) === "PENDING");
+    if (proposal) for (const [label, decision] of [["Godkänn internt resultat", "approve"], ["Avvisa resultat", "reject"]]) actions.append(actionButton(label, async (button) => { const reason = window.prompt("Beskriv vilka resultat, källor och kostnader du har granskat. Ingen kundkontakt eller betalning godkänns.", ""); if (!reason || reason.trim().length < 12) return; await mutate(button, "/api/agents/actions/" + encodeURIComponent(proposal.id) + "/review", { decision, reason: reason.trim() }, "Granskningen är registrerad."); }, { disabled: !isAdmin() }));
+    return actions;
+  }
+  async function missionAction(button, mission, action) { const reason = window.prompt(({ pause: "Varför pausar du detta uppdrag?", resume: "Vad har granskats innan samma uppdrag får återupptas?", cancel: "Varför ska uppdraget avbrytas? Redan uppkomna kostnader bevaras." })[action], ""); if (!reason || reason.trim().length < 12) return; await mutate(button, "/api/missions/" + encodeURIComponent(mission.id) + "/" + action, { reason: reason.trim() }, action === "cancel" ? "Uppdraget är avbrutet. Historik och kostnader bevaras." : action === "pause" ? "Uppdraget är pausat." : "Återupptagningen har granskats."); }
+  function renderMissionDetail() {
+    const info = routeInfo(); if (info.group !== "missions" || !info.detail) return;
+    const target = byId("v13-mission-detail"), mission = first(state.detailCache["missions:" + info.sub]?.mission, missionRecords().find((m) => m.id === info.sub)); target.replaceChildren();
+    if (!mission) { empty(target, "Uppdraget finns inte i den tillgängliga historiken.", "Till uppdrag", "/missions"); return; }
+    const heading = el("div", "view-heading"); const title = el("div"); title.append(routeLink("← Alla uppdrag", "/missions"), el("h1", "", mission.goal), el("p", "muted", mission.id)); heading.append(title, badge(missionState(mission))); target.append(heading, missionControls(mission));
+    const tasks = currentTasks(mission.id), done = tasks.filter((t) => asStatus(t) === "COMPLETED").length;
+    const stats = el("div", "detail-stats"); stats.append(statCard("Steg", done + " / " + tasks.length, "Slutförda / registrerade"), statCard("Kostnad & reservation", mission.actual_and_pending_cost_minor, "Uppdragets aktuella belastning", true), statCard("Kostnadstak", mission.max_cost_minor, "Överordnade mandat gäller", true), statCard("Tidsgräns", date(mission.deadline_at), "Skapad " + date(mission.created_at))); target.append(stats);
+    if (mission.blocker || mission.uncertain_outcome) target.append(el("div", "notice notice-error", first(mission.blocker?.message, mission.blocker?.code, "Leverantörsutfallet är okänt. Manuell avstämning krävs innan fortsatt arbete.")));
+    const timeline = el("article", "panel"); timeline.append(el("h2", "", "Uppdragets steg & tidslinje"));
+    for (const task of tasks) { const row = el("div", "timeline-row"); const marker = el("span", "timeline-marker", asStatus(task) === "COMPLETED" ? "✓" : "·"); const body = el("div", "timeline-copy"); const header = el("div", "task-heading"); header.append(el("strong", "", (agentNames[task.role] || task.role) + " · " + first(task.objective, task.step, "Internt delsteg")), badge(asStatus(task))); body.append(header, el("p", "row-meta", "Start " + date(first(task.started_at, task.created_at)) + " · klar " + date(task.finished_at))); if (task.error_code || task.error_message) body.append(el("p", "blocker-note", first(task.error_message, errorNames[task.error_code], task.error_code))); if (task.output) body.append(resultDetails("Visa registrerat resultat", taskOutput(task))); row.append(marker, body); timeline.append(row); }
+    if (!tasks.length) timeline.append(el("p", "empty-state", "Ingen deluppgift har registrerats.")); target.append(timeline);
+    const outputs = resultRecords().filter((r) => r.mission_id === mission.id); const box = el("article", "panel"); box.append(el("h2", "", "Leverabler")); for (const result of outputs) box.append(routeLink(result.title + " · version " + result.version, "/deliverables/" + encodeURIComponent(result.id), "result-link")); if (!outputs.length) box.append(el("p", "muted", "Ingen leverabel är sparad ännu.")); target.append(box, technicalDetails({ mission, tasks }));
+  }
+  function renderAgentViews() {
+    const roles = list(state.v12?.agents?.roles), target = byId("v13-agent-grid"); target.replaceChildren();
+    const descriptions = { ceo: "Planering, delegation och slutrapport", lead_research: "Godkända källor, fakta och osäkerheter", sales: "Målgrupp, affärsmöjligheter och interna utkast", delivery: "Rapporter, affärsplaner och leverabler", finance: "Budget, kostnader och preliminära kalkyler", compliance: "Behörigheter, risker och intern kvalitet" };
+    for (const role of roles) { const card = el("article", "v13-agent-card"), header = el("div", "panel-heading"); header.append(el("span", "role-symbol large", (agentNames[role.role] || role.role).slice(0, 1)), badge(agentState(role))); card.append(header, routeLink(agentNames[role.role] || role.role, "/agents/" + role.role, "agent-card-title"), el("p", "muted small", descriptions[role.role])); const active = first(role.active_mission?.goal, role.current_task?.objective, role.last_task?.objective); card.append(el("p", "agent-assignment", active || "Inget aktivt uppdrag")); const activity = list(state.v12?.metrics?.agent_activity).find((a) => a.role === role.role); const cost = first(activity?.booked_cost_minor, role.budget?.actual_minor, role.actual_cost_minor, 0); card.append(el("div", "agent-card-meta", "Bokfört " + amount(cost) + " · " + number(role.completed) + " slutförda steg"), routeLink("Öppna agent →", "/agents/" + role.role, "text-link")); target.append(card); }
+    if (!roles.length) empty(target, "Ingen agentstatus finns tillgänglig. Ingen pågående aktivitet antas.");
+    const workflows = byId("v13-workflows"); workflows.replaceChildren(); for (const mission of latest(missionRecords()).slice(0, 12)) { const card = el("article", "panel workflow-card"); card.append(compactMission(mission)); const graph = el("ol", "workflow-graph"); for (const task of currentTasks(mission.id)) { const step = el("li", "workflow-step"); step.append(el("strong", "", agentNames[task.role] || task.role), badge(asStatus(task)), el("small", "muted", first(task.step, task.objective))); graph.append(step); } card.append(graph); workflows.append(card); } if (!missionRecords().length) empty(workflows, "Inga beständiga arbetsflöden har skapats ännu.", "Skapa uppdrag", "/missions/new");
+    const info = routeInfo(); if (info.group === "agents" && info.detail) {
+      const role = roles.find((r) => r.role === info.sub), detail = byId("v13-agent-detail"); detail.replaceChildren(); if (!role) empty(detail, "Agentrollen finns inte.", "Alla agenter", "/agents"); else { const heading = el("div", "view-heading"), title = el("div"); title.append(routeLink("← Alla agenter", "/agents"), el("h1", "", agentNames[role.role] || role.role), el("p", "muted", descriptions[role.role])); heading.append(title, badge(agentState(role))); detail.append(heading); const tasks = latest(state.v12?.agents?.tasks).filter((t) => t.role === role.role); const activity = list(state.v12?.metrics?.agent_activity).find((a) => a.role === role.role) || {}; const stats = el("div", "detail-stats"); stats.append(statCard("Slutförda steg", number(role.completed)), statCard("Bokförd kostnad", first(activity.booked_cost_minor, role.budget?.actual_minor, 0), "Från kostnadsbokföringen", true), statCard("Reserverat", first(activity.reserved_cost_minor, role.budget?.reserved_minor, 0), "Inklusive osäkra utfall", true)); detail.append(stats); const history = el("article", "panel"); history.append(el("h2", "", "Senaste arbete & resultat")); for (const task of tasks.slice(0, 8)) { const row = el("div", "mission-item"); row.append(routeLink(task.objective || task.step || "Agentsteg", "/missions/" + encodeURIComponent(task.mission_id), "row-title"), badge(asStatus(task)), el("p", "row-meta", date(first(task.updated_at, task.created_at)))); if (task.output) row.append(resultDetails("Registrerat resultat", taskOutput(task))); if (task.error_code) row.append(el("p", "blocker-note", first(errorNames[task.error_code], task.error_code))); history.append(row); } if (!tasks.length) history.append(el("p", "empty-state", "Agenten har inga registrerade uppgifter.")); detail.append(history); }
+      for (const card of byId("agent-role-cards").children) card.hidden = card.querySelector("form")?.dataset.role !== info.sub;
+    }
+  }
+  function renderDeliverables() {
+    const query = byId("deliverable-search").value.trim().toLocaleLowerCase("sv"), results = latest(resultRecords()), target = byId("v13-deliverable-library"); target.replaceChildren();
+    for (const result of results.filter((r) => !query || [r.title, r.kind, r.mission_id].join(" ").toLocaleLowerCase("sv").includes(query))) { const card = el("article", "deliverable-card"); card.append(el("div", "file-symbol", "▤"), badge(asStatus(result)), routeLink(result.title || "Intern leverabel", "/deliverables/" + encodeURIComponent(result.id), "result-title"), el("p", "muted small", typeName(result.kind) + " · version " + result.version), el("p", "row-meta", date(result.created_at) + " · " + (agentNames[result.responsible_agent] || "Delivery")), routeLink("Öppna resultat →", "/deliverables/" + encodeURIComponent(result.id), "text-link")); target.append(card); }
+    if (!target.children.length) empty(target, query ? "Inga leverabler matchar sökningen." : "Ditt resultatbibliotek är tomt. Ett blockerat uppdrag skapar ingen leverabel.", "Skapa beställning", "/deliverables/new");
+    const info = routeInfo(); if (info.group !== "deliverables" || !info.detail) return;
+    const reader = byId("v13-deliverable-reader"), result = results.find((r) => r.id === info.sub); reader.replaceChildren();
+    if (!result) { empty(reader, "Leverabeln finns inte i tillgänglig historik.", "Till biblioteket", "/deliverables"); return; }
+    const heading = el("div", "view-heading no-print"), title = el("div"); title.append(routeLink("← Alla leverabler", "/deliverables"), el("p", "eyebrow", typeName(result.kind)), el("h1", "", result.title), el("p", "muted", "Version " + result.version + " · " + date(result.created_at) + " · " + (agentNames[result.responsible_agent] || "Delivery"))); heading.append(title, badge(asStatus(result))); reader.append(heading);
+    const actions = el("div", "button-row no-print"); for (const [format, label] of [["markdown", "Hämta Markdown"], ["json", "Hämta JSON"]]) { const link = el("a", "button button-secondary", label); link.href = "/api/deliverables/" + encodeURIComponent(result.id) + "/export?format=" + format; link.download = ""; actions.append(link); } actions.append(actionButton("Skriv ut / spara som PDF", () => window.print()));
+    if (!["APPROVED", "REJECTED"].includes(asStatus(result))) for (const [label, decision] of [["Godkänn version", "approve"], ["Avvisa version", "reject"]]) actions.append(actionButton(label, async (button) => { const reason = window.prompt("Granska innehåll, källor, osäkerheter och exakt version. Godkännandet tillåter inget externt utskick.", ""); if (!reason || reason.trim().length < 12) return; await mutate(button, "/api/factory/results/" + encodeURIComponent(result.id) + "/review", { decision, reason: reason.trim() }, "Versionsgranskningen är registrerad."); }, { disabled: !isAdmin() })); reader.append(actions);
+    if (result.mission_id) reader.append(routeLink("Visa uppdragets steg, kostnader & granskningar →", "/missions/" + encodeURIComponent(result.mission_id), "result-link no-print"));
+    const document = el("article", "report-document"); document.append(el("p", "document-watermark", "Jarvis · powered by Ignitic · Intern leverabel · " + statusLabel(asStatus(result))), humanContent(result.content || result.markdown)); reader.append(document);
+    const sources = el("article", "panel"); sources.append(el("h2", "", "Underlag & kvalitetskontroll")); for (const source of list(first(result.source_snapshot, result.sources, result.citations))) { const item = el("div", "source-item"); item.append(el("strong", "small", first(source.title, source.source_id, source.id, "Källa")), el("p", "prose small", first(source.evidence, source.content, "Registrerat källunderlag")), el("p", "source-note", first(source.source_url, source.url, "Ingen URL registrerad"))); sources.append(item); } if (!list(first(result.source_snapshot, result.sources, result.citations)).length) sources.append(el("p", "muted", "Ingen extern källhänvisning finns. Underlag från briefen är inte verifierad extern fakta.")); for (const issue of list(result.quality?.issues)) sources.append(el("p", "blocker-note", typeof issue === "string" ? issue : first(issue.message, issue.code, "Kvalitetspunkt kräver granskning"))); sources.append(el("p", "footnote", "Automatisk struktur- och källkontroll bevisar inte saklig riktighet. Granska underlaget innan användning.")); reader.append(sources);
+    const versions = el("article", "panel no-print"); versions.append(el("h2", "", "Versionshistorik")); for (const previous of results.filter((r) => r.order_id === result.order_id).sort((a, b) => b.version - a.version)) { const row = el("div", "compact-row"); row.append(routeLink("Version " + previous.version + " · " + date(previous.created_at), "/deliverables/" + encodeURIComponent(previous.id)), badge(asStatus(previous))); versions.append(row); } reader.append(versions, technicalDetails(result));
+  }
+  function renderFinanceV13() {
+    const metrics = state.v12?.metrics || {}, finance = first(state.v12?.finance, metrics.finance, {}), target = byId("v13-cost-breakdown"); target.replaceChildren();
+    const totals = finance.totals || finance;
+    const cards = el("div", "detail-stats"); cards.append(statCard("Bokförd kostnad", first(totals.booked_cost_minor, totals.booked_sek_minor, totals.actual_sek_minor, metrics.actual_cost_minor), "Faktiska registrerade SEK-kostnader", true), statCard("Reserverad kostnad", first(totals.reserved_cost_minor, totals.reserved_sek_minor, metrics.reserved_cost_minor), "Inte slutlig leverantörsdebitering", true), statCard("Verifierad intäkt", metrics.verified_revenue_minor, "Endast verifierade live-kvitton", true)); target.append(cards);
+    for (const [name, label] of [["by_model", "Kostnad per modell"], ["by_agent", "Kostnad per agent"], ["by_mission", "Kostnad per uppdrag"], ["by_workflow", "Kostnad per arbetsflöde"]]) { const panel = el("article", "panel"); panel.append(el("h2", "", label)); const rows = list(finance[name]); if (!rows.length) panel.append(el("p", "empty-state", "Ingen bokförd användning i denna grupp ännu.")); for (const row of rows.slice(0, 30)) { const line = el("div", "compact-row"); line.append(el("span", "row-title", first(row.model, agentNames[row.role], row.agent, agentNames[row.id], row.mission_id, row.workflow_id, row.key, row.name, row.id, "Registrerad grupp")), el("strong", "small", amount(first(row.booked_sek_minor, row.booked_cost_minor, row.actual_sek_minor, row.actual_minor, row.cost_minor)))); panel.append(line); panel.append(el("p", "row-meta", "Reserverat: " + amount(row.reserved_cost_minor) + " · " + (number(row.reported_cost_count) ? "Leverantören rapporterade " + row.provider_reported_usd + " USD" : "Ingen leverantörskostnad rapporterad") + " · " + number(row.input_tokens) + " in / " + number(row.output_tokens) + " ut, token")); } target.append(panel); }
+    target.append(el("p", "footnote", "Leverantörens rapporterade belopp, frysta växelkursreserveringar och bokförda SEK-belopp är separata underlag. Uppskattad framtida intäkt räknas aldrig som verklig intäkt."));
+    chart("finance-outcome-chart", list(metrics.series), (p) => p.cost_minor, "Faktiskt bokförd kostnad i SEK", true);
+    chart("finance-revenue-chart", list(metrics.series), (p) => p.verified_revenue_minor, "Verifierad verklig intäkt per dag", true);
+    chart("finance-agent-chart", list(metrics.agent_activity).map((p) => ({ ...p, date: agentNames[p.role] || p.role })), (p) => p.completed_tasks, "Registrerade slutförda steg per agent");
+  }
+  function renderReportsV13() {
+    const target = byId("v13-research-reports"); target.replaceChildren();
+    for (const report of latest(state.v12?.reports?.opportunities)) { const card = el("article", "panel"); card.append(el("h2", "", "Interna affärsmöjligheter · hypoteser"), el("p", "footnote", "Prisidéer och framtida utfall är uppskattningar. Inget erbjudande har skickats och ingen intäkt har uppstått."), humanContent(report)); if (report.mission_id) card.append(routeLink("Visa uppdrag →", "/missions/" + encodeURIComponent(report.mission_id))); target.append(card); }
+    for (const report of latest(state.v12?.reports?.research)) { const card = el("article", "panel"); card.append(el("div", "panel-heading")); card.lastChild.append(el("h2", "", first(report.title, report.goal, "Källbelagd researchrapport")), badge(asStatus(report))); card.append(el("p", "row-meta", date(report.created_at)), humanContent(report.analysis || report.content || report.summary), resultDetails("Källor & underlag", { citations: report.citations, sources: report.source_plan, limitations: report.issues })); if (report.mission_id) card.append(routeLink("Öppna uppdrag →", "/missions/" + encodeURIComponent(report.mission_id))); target.append(card); } if (!target.children.length) empty(target, "Ingen researchrapport är sparad. Godkända underlag krävs innan faktabaserad analys.", "Granska källor", "/research/sources");
+    for (const id of ["v13-system-traces", "agent-history-traces"]) { const box = byId(id); box.replaceChildren(el("h2", "", "AI-anrop & spårning")); const traces = latest(state.v12?.ai_traces); for (const trace of traces.slice(0, 30)) { const row = el("div", "mission-item"); row.append(el("div", "task-heading")); row.lastChild.append(el("strong", "small", (agentNames[trace.role] || trace.role) + " · " + trace.model), badge(asStatus(trace))); row.append(el("p", "row-meta", date(trace.created_at) + " · " + number(trace.input_tokens) + " in / " + number(trace.output_tokens) + " ut · " + amount(trace.actual_sek_minor))); if (trace.error_message || trace.validation_error?.message) row.append(el("p", "blocker-note", first(trace.error_message, trace.validation_error?.message))); row.append(technicalDetails(trace)); box.append(row); } if (!traces.length) box.append(el("p", "empty-state", "Inga verkliga AI-anrop har registrerats.")); }
+  }
+  function renderCatalogue() {
+    const catalogue = list(first(state.v12?.catalogue, state.v12?.services?.types)); if (!catalogue.length) return;
+    for (const name of ["mission-type", "factory-type"]) { const select = byId(name); if (select.dataset.dirty || select === document.activeElement) continue; const value = select.value; select.replaceChildren(); for (const type of catalogue) { const option = el("option", "", type.name); option.value = type.id; select.append(option); } if ([...select.options].some((option) => option.value === value)) select.value = value; }
+  }
+
+  function loadCurrentDetail() {
+    const info = routeInfo(); if (!info.detail || !state.user || !["missions", "deliverables"].includes(info.group)) return;
+    const cacheKey = info.group + ":" + info.sub; if (state.detailCache[cacheKey] || state.detailLoading === cacheKey) return;
+    state.detailLoading = cacheKey; const generation = state.detailGeneration;
+    api("/api/" + info.group + "/" + encodeURIComponent(info.sub)).then((result) => { if (generation !== state.detailGeneration) return; state.detailCache[cacheKey] = result; if (routeInfo().sub === info.sub) renderV13(); }).catch((error) => { if (generation !== state.detailGeneration) return; state.detailCache[cacheKey] = { error: error.message }; if (routeInfo().sub === info.sub) showError(error.message); }).finally(() => { if (generation === state.detailGeneration) state.detailLoading = null; });
+  }
+  function renderSourceDocuments() {
+    const target = byId("v13-source-documents"); target.replaceChildren();
+    for (const item of list(state.v12?.documents)) { const row = el("div", "source-item"); row.append(el("strong", "small", item.title || "Godkänt källdokument"), el("p", "row-meta", first(item.source_id, "Källa") + " · " + date(first(item.fetched_at, item.collected_at, item.created_at))), el("p", "prose small", String(first(item.content, item.excerpt, "")).slice(0, 700)), technicalDetails(item)); target.append(row); }
+    for (const conflict of list(state.v12?.source_conflicts)) { const item = el("div", "notice notice-error"); item.append(el("div", "", first(conflict.message, "Motstridiga källuppgifter: " + [conflict.subject, conflict.predicate].filter(Boolean).join(" · ") + ". Granska de exakta underlagen.")), technicalDetails(conflict)); target.append(item); }
+    if (!target.children.length) empty(target, "Inga godkända dokument eller registrerade källkonflikter ännu.");
+    const limits = first(state.v12?.finance?.ai_limits, state.v12?.metrics?.finance?.ai_limits, state.v12?.ai_limits, {});
+    hydrateConfig("ai-limits-form", { "ai-limit-day": number(limits.daily_limit_minor) / 100, "ai-limit-month": number(limits.monthly_limit_minor) / 100 });
+    text("ai-limit-status", "Tillgängligt i dygnsfönstret: " + amount(limits.daily_remaining_minor) + " · i 30-dagarsfönstret: " + amount(limits.monthly_remaining_minor) + ". Globala mandat gäller samtidigt.");
+  }
+  byId("document-import-form").addEventListener("submit", async (event) => { event.preventDefault(); const document = { title: byId("document-title").value.trim(), content: byId("document-content").value.trim() }; if (byId("document-url").value.trim()) document.source_url = byId("document-url").value.trim(); const result = await mutate(byId("document-import-submit"), "/api/research/sources/" + encodeURIComponent(byId("document-source").value.trim()) + "/documents", { documents: [document], idempotency_key: key("document") }, "Dokumentunderlaget är sparat med källhänvisning. Ingen extern källa har hämtats."); if (result) { byId("document-content").value = ""; delete event.target.dataset.dirty; } });
+  byId("ai-limits-form").addEventListener("submit", async (event) => { event.preventDefault(); await saveConfig("ai-limits-form", "ai-limit-submit", "/api/budget/ai-limits", { daily_limit_minor: Math.round(Number(byId("ai-limit-day").value) * 100), monthly_limit_minor: Math.round(Number(byId("ai-limit-month").value) * 100), reason: byId("ai-limit-reason").value.trim() }, "De granskade AI-tidsgränserna är sparade."); });
+
+  function renderV13() {
+    if (!state.user || !state.v12) return;
+    loadCurrentDetail(); renderDashboard(); renderMissionLists(); renderMissionDetail(); renderAgentViews(); renderDeliverables(); renderFinanceV13(); renderReportsV13(); renderCatalogue(); renderSourceDocuments();
+  }
+
   selectPage();
   byId("pipeline-config-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1008,11 +1201,11 @@
     if (!isAdmin() || !dataVersionReady() || !byId("source-reviewed").checked) return;
     const sourceId = byId("source-id").value.trim();
     const saved = await saveConfig("source-config-form", "source-config-save", "/api/research/sources/" + encodeURIComponent(sourceId), {
-      name: byId("source-name").value.trim(), kind: "upload", url: byId("source-url").value.trim(),
+      name: byId("source-name").value.trim(), kind: byId("source-kind").value, url: byId("source-url").value.trim(),
       approved: true, license_reviewed: true, legal_review_reference: byId("source-reference").value.trim(),
-      fetch_enabled: false, minimum_quality: 80, minimum_interval_seconds: 3600,
-      cost_minor: 0, cost_evidence: byId("source-cost-evidence").value.trim(), data_mode: "REAL"
-    }, "Källgranskningen är registrerad för manuell katalogimport. Ingen nätverkshämtning har aktiverats.");
+      fetch_enabled: byId("source-fetch-enabled").checked, minimum_quality: 80, minimum_interval_seconds: 3600,
+      cost_minor: Math.round(Number(byId("source-fetch-cost").value) * 100), cost_evidence: byId("source-cost-evidence").value.trim(), data_mode: "REAL"
+    }, "Källgranskningen är registrerad. En hämtning kräver ett separat beslut och serverns nätverksgodkännande.");
     if (saved) byId("source-config-form").reset();
   });
   byId("import-lead-form").addEventListener("submit", async (event) => {
@@ -1035,11 +1228,24 @@
       toast("Importerade uppgifter: " + first(saved.accepted, 1) + ". Dubbletter: " + first(saved.duplicates, 0) + ". Ingen kundkontakt har tagits.");
     }
   });
-  for (const link of document.querySelectorAll(".nav-link")) link.addEventListener("click", () => {
-    for (const other of document.querySelectorAll(".nav-link")) { other.classList.remove("active"); other.removeAttribute("aria-current"); }
-    link.classList.add("active"); link.setAttribute("aria-current", "location");
-  });
+
   for (const dialog of document.querySelectorAll("dialog")) dialog.addEventListener("click", (event) => { if (event.target === dialog) { const bounds = dialog.getBoundingClientRect(); if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) dialog.close(); } });
+
+  document.addEventListener("click", (event) => { const link = event.target.closest("a[data-route]"); if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); navigate(link.dataset.route || link.getAttribute("href")); });
+  window.addEventListener("popstate", () => { selectPage(); renderV13(); });
+  for (const input of document.querySelectorAll(".mission-search")) input.addEventListener("input", renderMissionLists);
+  byId("deliverable-search").addEventListener("input", renderDeliverables);
+  for (const select of [byId("mission-type"), byId("factory-type")]) select.addEventListener("change", () => { select.dataset.dirty = "true"; });
+  byId("theme-toggle").addEventListener("click", () => { const light = document.documentElement.dataset.theme !== "light"; document.documentElement.dataset.theme = light ? "light" : "dark"; try { localStorage.setItem("jarvis-theme", light ? "light" : "dark"); } catch {} byId("theme-toggle").setAttribute("aria-label", light ? "Byt till mörkt tema" : "Byt till ljust tema"); });
+  byId("sidebar-toggle").addEventListener("click", () => { const collapsed = byId("app-shell").classList.toggle("sidebar-collapsed"); byId("sidebar-toggle").setAttribute("aria-expanded", String(!collapsed)); try { localStorage.setItem("jarvis-sidebar", collapsed ? "collapsed" : "expanded"); } catch {} });
+  byId("mobile-menu").addEventListener("click", () => { const open = byId("app-shell").classList.toggle("mobile-nav-open"); byId("mobile-menu").setAttribute("aria-expanded", String(open)); syncNavigationLayout(); });
+  try { document.documentElement.dataset.theme = localStorage.getItem("jarvis-theme") === "light" ? "light" : "dark"; const collapsed = localStorage.getItem("jarvis-sidebar") === "collapsed"; byId("app-shell").classList.toggle("sidebar-collapsed", collapsed); byId("sidebar-toggle").setAttribute("aria-expanded", String(!collapsed)); byId("theme-toggle").setAttribute("aria-label", document.documentElement.dataset.theme === "light" ? "Byt till mörkt tema" : "Byt till ljust tema"); } catch {}
+  function syncNavigationLayout() { const closed = matchMedia("(max-width:680px)").matches && !byId("app-shell").classList.contains("mobile-nav-open"); byId("sidebar").inert = closed; byId("sidebar").setAttribute("aria-hidden", String(closed)); }
+  window.addEventListener("resize", syncNavigationLayout); syncNavigationLayout();
+  byId("secret-config-form").addEventListener("submit", async (event) => { event.preventDefault(); const input = byId("secret-value"); const result = await mutate(byId("secret-submit"), "/api/secrets/" + encodeURIComponent(byId("secret-name").value), { value: input.value }, "Serverhemligheten har uppdaterats. Ingen leverantör har aktiverats."); input.value = ""; if (result) delete event.target.dataset.dirty; });
+  byId("user-create-form").addEventListener("submit", async (event) => { event.preventDefault(); const result = await mutate(byId("user-create-submit"), "/api/users", { email: byId("user-email").value.trim(), password: byId("user-password").value, role: byId("user-new-role").value }, "Det interna användarkontot är skapat."); byId("user-password").value = ""; if (result) event.target.reset(); });
+  byId("cost-form").addEventListener("submit", async (event) => { event.preventDefault(); const reference = byId("cost-reference").value.trim(); await mutate(byId("cost-submit"), "/api/budget/costs", { idempotency_key: "invoice:" + reference, vendor: byId("cost-vendor").value.trim(), workflow_id: "invoice:" + reference, actual_minor: Math.round(Number(byId("cost-amount").value) * 100), currency: "SEK", category: byId("cost-category").value, source: reference }, "Den faktiska kostnaden är bokförd. Ingen betalning har utförts."); });
+
   setInterval(() => { if (!document.hidden && state.user) refresh(); }, 10000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden && state.user) refresh(); });
   (async () => { try { establishSession(await api("/api/auth/me")); await refresh(); } catch { showLogin(); } })();

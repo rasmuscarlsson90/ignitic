@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="sv">
+<html lang="sv" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
-  <title>Jarvis Lite v1.2 · Ignitic</title>
+  <meta name="color-scheme" content="dark light">
+  <title>Jarvis · Business OS · Ignitic</title>
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/app.js" defer></script>
 </head>
@@ -13,12 +13,24 @@
 
   <main id="login-screen" class="login-screen">
     <section class="login-story" aria-label="Om Jarvis Lite">
-      <div class="brand brand-light"><span class="brand-mark" aria-hidden="true">J</span><div><strong>Jarvis Lite</strong><span>Powered by Ignitic</span></div></div>
-      <div class="login-pitch"><span class="eyebrow">Din interna kontrollpanel</span><h1>Från första kontakt<br>till trygg leverans.</h1><p>En samlad arbetsyta för leads, godkända erbjudanden, agentarbete och ekonomisk kontroll.</p></div>
-      <div class="login-principles"><span>✓ Spårbara beslut</span><span>✓ Budget före åtgärd</span><span>✓ Mänskligt godkännande</span></div>
+      <div class="brand brand-light">
+<span class="brand-mark" aria-hidden="true">J</span><div>
+<strong>Jarvis Lite</strong><span>Powered by Ignitic</span>
+</div>
+</div>
+      <div class="login-pitch">
+<span class="eyebrow">Din interna kontrollpanel</span><h1>Dina mål.
+Ett samordnat AI-team.</h1>
+<p>En professionell arbetsyta för källbelagd research, interna affärsuppdrag och resultat du kan granska.</p>
+</div>
+      <div class="login-principles">
+<span>✓ Spårbara beslut</span><span>✓ Budget före åtgärd</span><span>✓ Mänskligt godkännande</span>
+</div>
     </section>
     <section class="login-panel" aria-labelledby="login-title">
-      <div class="login-form-wrap"><span class="eyebrow">Välkommen tillbaka</span><h2 id="login-title">Logga in i Jarvis</h2><p class="muted">Använd ditt interna operatörskonto. Live-läge aktiveras aldrig från den här sidan.</p>
+      <div class="login-form-wrap">
+<span class="eyebrow">Välkommen tillbaka</span><h2 id="login-title">Logga in i Jarvis</h2>
+<p class="muted">Använd ditt interna operatörskonto. Live-läge aktiveras aldrig från den här sidan.</p>
         <form id="login-form">
           <label for="login-email">E-postadress</label><input id="login-email" name="email" type="email" autocomplete="username" required maxlength="254" placeholder="namn@företag.se">
           <label for="login-password">Lösenord</label><input id="login-password" name="password" type="password" autocomplete="current-password" required>
@@ -31,94 +43,864 @@
   </main>
 
   <div id="app-shell" class="app-shell" hidden>
-    <aside class="sidebar" aria-label="Huvudnavigation">
-      <a class="brand" href="#overview"><span class="brand-mark" aria-hidden="true">J</span><div><strong>Jarvis Lite</strong><span>Powered by Ignitic</span></div></a>
-      <div class="workspace-label">DIN ARBETSYTA</div>
-      <nav class="navigation">
-        <a href="#overview" class="nav-link active"><span aria-hidden="true">◫</span> Översikt</a>
-        <a href="#leads" class="nav-link"><span aria-hidden="true">◎</span> Leads & affärer <span id="nav-lead-count" class="nav-count">—</span></a>
-        <a href="#preparation" class="nav-link"><span aria-hidden="true">◈</span> Förberedelser</a>
-        <a href="#business-engine" class="nav-link"><span aria-hidden="true">▷</span> Business Engine</a>
-        <a href="#crm" class="nav-link"><span aria-hidden="true">⌕</span> CRM & research</a>
-        <a href="#finance" class="nav-link"><span aria-hidden="true">↗</span> Ekonomi</a>
-        <a href="#operations" class="nav-link"><span aria-hidden="true">◇</span> Agentarbete</a>
-        <a href="/agents" class="nav-link" id="agents-navigation"><span aria-hidden="true">◉</span> Agent Control Center</a>
-        <a href="#factory" class="nav-link"><span aria-hidden="true">▧</span> Tjänstefabrik</a>
-        <a href="#security" class="nav-link"><span aria-hidden="true">⊞</span> Säkerhet & logg</a>
-      </nav>
-      <div class="sidebar-bottom"><div class="sidebar-note"><span class="live-dot" aria-hidden="true"></span><strong>Du behåller kontrollen</strong><p>Intern AI-budget granskas separat. Kundkontakt och betalningar är spärrade i v1.2.</p></div><button id="logout-button" class="button button-quiet button-wide" type="button">Logga ut</button></div>
+    <aside class="sidebar" aria-label="Huvudnavigation" id="sidebar">
+      <a class="brand" href="/" data-route="/"><span class="brand-mark" aria-hidden="true">J</span><div>
+<strong>Jarvis Lite</strong><span>Powered by Ignitic</span>
+</div></a>
+      <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-label="Fäll ihop sidomenyn" aria-expanded="true">‹<span>Fäll ihop</span></button><div class="workspace-label">BUSINESS OPERATING SYSTEM</div>
+      <nav class="navigation" aria-label="Huvudvyer"><a href="/" data-route="/" class="nav-link"><svg aria-hidden="true" viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg><span class="nav-label">Översikt</span></a><a href="/agents" data-route="/agents" class="nav-link"><svg aria-hidden="true" viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"></circle><path d="M4 21v-2a8 8 0 0 1 16 0v2M3 8h2m14 0h2"></path></svg><span class="nav-label">AI-agenter</span></a><a href="/missions" data-route="/missions" class="nav-link"><svg aria-hidden="true" viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="4" width="14" height="17" rx="2"></rect><path d="M9 4V2h6v2M9 10h6M9 14h6M9 18h3"></path></svg><span class="nav-label">Uppdrag</span></a><a href="/research" data-route="/research" class="nav-link"><svg aria-hidden="true" viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m16 16 5 5"></path></svg><span class="nav-label">Research &amp; Leads</span></a><a href="/deliverables" data-route="/deliverables" class="nav-link"><svg aria-hidden="true" viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8M8 17h6"></path></svg><span class="nav-label">Leverabler</span></a><a href="/finance" data-route="/finance" class="nav-link"><svg aria-hidden="true" viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3v18h18M7 16l4-5 4 2 5-8"></path></svg><span class="nav-label">Ekonomi</span></a><a href="/settings" data-route="/settings" class="nav-link"><svg aria-hidden="true" viewbox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8M9 3l-1 3-3 1-2 3 2 3v4l3 1 2 3 3-1 3 1 2-3 3-1v-4l2-3-2-3-3-1-1-3z"></path></svg><span class="nav-label">Inställningar</span></a></nav><div class="sidebar-bottom">
+<div class="sidebar-note"><p>Intern autonomi.<br>Du behåller mandatet.</p></div>
+<button id="logout-button" class="button button-quiet button-wide" type="button">Logga ut</button>
+</div>
     </aside>
     <div class="workspace">
-      <header class="topbar"><div class="breadcrumb">Arbetsyta <span aria-hidden="true">/</span> <strong>Kontrollpanel</strong></div><div class="topbar-right"><span id="mode-badge" class="badge badge-demo">Laddar</span><span id="user-role" class="role-label"></span><span id="user-avatar" class="avatar" aria-hidden="true">J</span></div></header>
+      <header class="topbar"><div class="breadcrumb">
+<button id="mobile-menu" type="button" class="icon-button" aria-label="Öppna navigation" aria-expanded="false">☰</button><span>Arbetsyta <span aria-hidden="true">/</span> <strong id="route-title">Översikt</strong></span>
+</div>
+<div class="topbar-right">
+<span id="last-updated" class="sync-time"></span><button id="theme-toggle" type="button" class="icon-button" aria-label="Byt till ljust tema" title="Byt tema">☼</button><button id="refresh-button" class="button button-secondary" type="button">Uppdatera</button><span id="mode-badge" class="badge badge-demo">Laddar</span><span id="user-role" class="role-label"></span><span id="user-avatar" class="avatar" aria-hidden="true">J</span>
+</div></header>
       <main id="main" class="main-content" tabindex="-1">
-        <div id="global-error" class="notice notice-error" role="alert" hidden><span id="global-error-text"></span><button id="dismiss-error" class="icon-button" aria-label="Stäng felmeddelandet" type="button">×</button></div>
-        <section id="overview" aria-labelledby="overview-title" class="page-section">
-          <div class="page-heading"><div><div class="eyebrow">VERKSAMHETENS ÖVERBLICK</div><h1 id="overview-title">Din arbetsdag, samlad.</h1><p class="muted">Affärer, agentbeslut och nästa steg — med tydliga gränser.</p></div><div class="heading-actions"><button id="refresh-button" class="button button-secondary" type="button">↻ Uppdatera</button><button id="demo-button" class="button button-primary" type="button"><span aria-hidden="true">＋</span> Starta demoresa</button></div></div>
-          <div id="demo-notice" class="notice notice-demo"><span class="notice-icon" aria-hidden="true">◇</span><div><strong>Demoläge — en trygg plats att testa.</strong><p>Kundresor och leverantörshändelser är simulerade. Inga verkliga utskick eller betalningsbegäranden görs.</p></div><span class="badge badge-demo">TESTDATA</span></div>
-          <div id="kill-notice" class="notice notice-stop" role="status" hidden><span aria-hidden="true">■</span><div><strong>Nödstoppet är aktivt.</strong><p>Nya kostnadsdrivande jobb och externa åtgärder är blockerade. Pausade jobb kräver ett separat beslut för att återupptas.</p></div></div>
-          <div id="preparation-notice" class="notice notice-preparation"><span class="notice-icon" aria-hidden="true">◈</span><div><strong>Förberedelser för verklig B2B-försäljning</strong><p id="preparation-status">Källor och utkast kan granskas här. Verklig kundkontakt kräver separata tester, juridisk granskning och uttryckligt godkännande.</p></div><span id="contact-gate-badge" class="badge badge-neutral">Kundkontakt spärrad</span></div>
-          <div class="data-boundary" aria-label="Åtskilda verkliga data och testdata"><div><strong id="real-lead-count">—</strong><span>Verkliga leads</span></div><div><strong id="demo-lead-count">—</strong><span>Demoleads</span></div><div><strong id="legacy-lead-count">—</strong><span>Äldre, ej klassificerade</span></div><div><strong id="demo-revenue">—</strong><span>Simulerad intäkt · aldrig verklig</span></div></div>
-          <p id="real-activity-note" class="footnote activity-note">Verkliga kontaktförsök och oskickade utkast hämtas.</p><div class="metric-grid" aria-label="Verkliga affärsresultat">
+        <div id="global-error" class="notice notice-error" role="alert" hidden>
+<span id="global-error-text"></span><button id="dismiss-error" class="icon-button" aria-label="Stäng felmeddelandet" type="button">×</button>
+</div>
+        <div id="kill-notice" class="notice notice-stop" role="status" hidden>
+<span aria-hidden="true">■</span><div>
+<strong>Nödstoppet är aktivt.</strong><p>Nya kostnadsdrivande jobb och externa åtgärder är blockerade. Pausade jobb kräver ett separat beslut för att återupptas.</p>
+</div>
+</div>
+          <nav id="view-tabs" class="view-tabs" aria-label="Undervyer"></nav><div id="route-outlet" aria-live="off">
+<section id="view-overview" class="route-panel" data-panel="overview" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Ditt arbete. Tydligt samlat.</h1>
+<p class="muted">Planera internt. Följ varje steg. Granska det som betyder något.</p>
+</div></div>
+<div class="dashboard-actions">
+<a class="button button-primary" href="/missions/new" data-route="/missions/new">＋ Nytt uppdrag</a><a class="button button-secondary" href="/agents" data-route="/agents">Öppna agentkontroll</a><a class="button button-quiet" href="/missions/waiting" data-route="/missions/waiting">Granska väntande</a>
+</div>
+<div id="dashboard-stats" class="dashboard-stats"></div>
+<div class="dashboard-grid">
+<article class="panel"><div class="panel-heading">
+<h2>Aktuella uppdrag</h2>
+<a href="/missions" data-route="/missions">Visa alla →</a>
+</div>
+<div id="dashboard-missions"></div></article><article class="panel"><div class="panel-heading">
+<h2>Agenternas aktivitet</h2>
+<a href="/agents" data-route="/agents">Alla agenter →</a>
+</div>
+<div id="dashboard-agents"></div></article><article class="panel"><div class="panel-heading">
+<h2>Senaste leverabler</h2>
+<a href="/deliverables" data-route="/deliverables">Biblioteket →</a>
+</div>
+<div id="dashboard-deliverables"></div></article><article class="panel"><div class="panel-heading">
+<h2>Viktiga händelser</h2>
+<span class="muted small">Revisionslogg</span>
+</div>
+<div id="dashboard-events"></div></article>
+</div>
+<div class="dashboard-charts">
+<article class="panel"><h2>AI-kostnad över tid</h2>
+<div id="dashboard-cost-chart" class="chart-box"></div></article><article class="panel"><h2>Genomförda uppdrag</h2>
+<div id="dashboard-mission-chart" class="chart-box"></div></article>
+</div></section><section id="view-agents-overview" class="route-panel" data-panel="agents/overview" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Ett team. Ett gemensamt mål.</h1>
+<p class="muted">Sex specialister med tydliga befogenheter och spårbart arbete.</p>
+</div></div>
+<div id="v13-agent-grid" class="v13-agent-grid"></div></section><section id="view-agents-workflows" class="route-panel" data-panel="agents/workflows" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Så samarbetar agenterna</h1>
+<p class="muted">Beständiga beroenden från verkliga uppdrag. Ingen aktivitet antas.</p>
+</div></div>
+<div id="v13-workflows"></div></section><section id="view-agents-activity" class="route-panel" data-panel="agents/activity" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Aktivitet just nu</h1>
+<p class="muted">Körbara jobb, aktuella uppdrag och konkreta blockeringsorsaker.</p>
+</div></div>
+<article class="panel agent-history"><div class="panel-heading">
+<h3>Agentuppgifter &amp; körhistorik</h3>
+<span id="agent-tasks-count" class="muted small"></span>
+</div>
+<div id="agent-tasks-list" class="missions-list"></div></article></section><section id="view-agents-history" class="route-panel" data-panel="agents/history" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Beslut &amp; historik</h1>
+<p class="muted">Registrerade granskningsbeslut och leverantörsspår.</p>
+</div></div>
+<article class="panel agent-history"><h3>Föreslagna interna åtgärder</h3>
+<div id="agent-proposals" class="missions-list"></div>
+<p class="footnote">Att granska ett förslag aktiverar inga externa åtgärder.</p></article><div id="agent-history-traces" class="panel"></div></section><section id="view-agents-detail" class="route-panel" data-panel="agents/detail" hidden="hidden"><div id="v13-agent-detail"></div>
+<div id="agent-role-cards" class="agent-control-grid"></div></section><section id="view-missions-active" class="route-panel" data-panel="missions/active" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Uppdrag</h1>
+<p class="muted">Från affärsmål till granskat internt resultat.</p>
+</div></div>
+<div>
+<div class="mission-toolbar">
+<label class="search-field"><span aria-hidden="true">⌕</span><input class="mission-search" type="search" placeholder="Sök mål, agent eller uppdrags-ID" aria-label="Sök uppdrag"></label><a class="button button-primary" href="/missions/new" data-route="/missions/new">＋ Nytt uppdrag</a>
+</div>
+<div id="v13-missions-active" class="mission-table"></div>
+</div></section><section id="view-missions-waiting" class="route-panel" data-panel="missions/waiting" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Uppdrag</h1>
+<p class="muted">Från affärsmål till granskat internt resultat.</p>
+</div></div>
+<div>
+<div class="mission-toolbar">
+<label class="search-field"><span aria-hidden="true">⌕</span><input class="mission-search" type="search" placeholder="Sök mål, agent eller uppdrags-ID" aria-label="Sök uppdrag"></label><a class="button button-primary" href="/missions/new" data-route="/missions/new">＋ Nytt uppdrag</a>
+</div>
+<div id="v13-missions-waiting" class="mission-table"></div>
+</div></section><section id="view-missions-completed" class="route-panel" data-panel="missions/completed" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Uppdrag</h1>
+<p class="muted">Från affärsmål till granskat internt resultat.</p>
+</div></div>
+<div>
+<div class="mission-toolbar">
+<label class="search-field"><span aria-hidden="true">⌕</span><input class="mission-search" type="search" placeholder="Sök mål, agent eller uppdrags-ID" aria-label="Sök uppdrag"></label><a class="button button-primary" href="/missions/new" data-route="/missions/new">＋ Nytt uppdrag</a>
+</div>
+<div id="v13-missions-completed" class="mission-table"></div>
+</div></section><section id="view-missions-archive" class="route-panel" data-panel="missions/archive" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Uppdrag</h1>
+<p class="muted">Från affärsmål till granskat internt resultat.</p>
+</div></div>
+<div>
+<div class="mission-toolbar">
+<label class="search-field"><span aria-hidden="true">⌕</span><input class="mission-search" type="search" placeholder="Sök mål, agent eller uppdrags-ID" aria-label="Sök uppdrag"></label><a class="button button-primary" href="/missions/new" data-route="/missions/new">＋ Nytt uppdrag</a>
+</div>
+<div id="v13-missions-archive" class="mission-table"></div>
+</div></section><section id="view-missions-new" class="route-panel" data-panel="missions/new" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Vad vill du undersöka?</h1>
+<p class="muted">Ge teamet ett tydligt mål och godkända underlag. Budgeten kontrolleras före varje anrop.</p>
+</div></div>
+<article class="panel"><h3>Skapa internt uppdrag</h3>
+<form id="mission-form" class="config-form">
+<fieldset data-operator-only>
+<label for="mission-goal">Mål och avgränsning</label><textarea id="mission-goal" rows="3" required minlength="20" maxlength="4000" placeholder="Analysera möjligheter för AI-assistenten utifrån våra godkända företagsunderlag."></textarea><div class="form-grid">
+<div>
+<label for="mission-sources">Godkända käll-ID:n</label><input id="mission-sources" maxlength="800" placeholder="granskad-katalog">
+</div>
+<div>
+<label for="mission-leads">Lead-ID:n, kommatecken</label><input id="mission-leads" maxlength="1500">
+</div>
+<div>
+<label for="mission-type">Intern leverabel</label><select id="mission-type" class="factory-type"><option value="market_analysis">Marknadsanalys</option>
+<option value="seo_analysis">SEO-analys</option>
+<option value="content_calendar">Innehållskalender</option>
+<option value="marketing_strategy">Marknadsföringsstrategi</option>
+<option value="prospecting_report">Prospekteringsrapport</option></select>
+</div>
+<div>
+<label for="mission-cost">Högsta uppdragskostnad, SEK</label><input id="mission-cost" type="number" min="0.01" max="500" step="0.01" value="10" required>
+</div>
+<div>
+<label for="mission-priority">Prioritet</label><select id="mission-priority"><option value="normal">Normal</option>
+<option value="high">Hög</option>
+<option value="low">Låg</option></select>
+</div>
+</div>
+<button id="mission-submit" class="button button-primary" type="submit">Köa internt uppdrag</button>
+</fieldset>
+<details class="advanced-controls"><summary>Avancerade uppdragsgränser</summary><div class="form-grid">
+<div>
+<label for="mission-deadline">Tidsgräns, minuter</label><input id="mission-deadline" type="number" min="1" max="1440" value="60" required>
+</div>
+<div>
+<label for="mission-steps">Högst delsteg</label><input id="mission-steps" type="number" min="7" max="9" value="9" required>
+</div>
+<div>
+<label for="mission-retries">Högst återförsök per delsteg</label><input id="mission-retries" type="number" min="0" max="2" value="1" required>
+</div>
+<div>
+<label for="mission-revisions">Högst kvalitetsrevisioner</label><input id="mission-revisions" type="number" min="0" max="1" value="1" required>
+</div>
+</div></details>
+</form>
+<p class="footnote">Servern kräver AI-beredskap, verifierat källunderlag, budget och tillåtna interna steg. Blockerade uppdrag visas med orsak.</p>
+<p id="mission-feedback" class="inline-feedback" role="status"></p></article>
+          <p class="footnote">Utan aktuella, godkända källor kan faktabaserade analyser inte slutföras. Inga företag, intäkter eller researchfakta fabriceras.</p></section><section id="view-missions-detail" class="route-panel" data-panel="missions/detail" hidden="hidden"><div id="v13-mission-detail"></div>
+<p class="footnote">Kön bearbetas av serverns worker. Manuell körning och jobbavstämning finns i <a href="/settings/logs" data-route="/settings/logs">Systemloggar &amp; kö</a>.</p></section><section id="view-research-leads" class="route-panel" data-panel="research/leads" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Research &amp; Leads</h1>
+<p class="muted">Källbelagda företagsuppgifter och tydligt markerade AI-bedömningar.</p>
+</div></div>
+<article class="panel"><form id="crm-filter-form" class="crm-filters">
+<div>
+<label for="crm-query">Sök</label><input id="crm-query" type="search" maxlength="200" placeholder="Företag, domän eller behov">
+</div>
+<div>
+<label for="crm-industry">Bransch</label><input id="crm-industry" maxlength="120">
+</div>
+<div>
+<label for="crm-geography">Geografi</label><input id="crm-geography" maxlength="120">
+</div>
+<div>
+<label for="crm-mode">Datatyp</label><select id="crm-mode"><option value="REAL">Verkliga data</option>
+<option value="DEMO">Demodata</option>
+<option value="">Alla datatyper</option></select>
+</div>
+<div>
+<label for="crm-sort">Sortering</label><select id="crm-sort"><option value="score">Högsta bedömning</option>
+<option value="company">Företag</option>
+<option value="newest">Senast insamlade</option></select>
+</div>
+<button type="submit" id="crm-filter-submit" class="button button-secondary">Filtrera</button>
+</form>
+<div id="crm-results" class="crm-results"></div></article><section id="leads" class="legacy-leads-panel" aria-labelledby="leads-title"><div class="section-heading">
+<div>
+<span class="eyebrow">FÖRSÄLJNINGSARBETET</span><h2 id="leads-title">Leads &amp; affärer</h2>
+<p class="muted">Spårbar källa, tydlig status och godkänd kontaktpolicy.</p>
+</div>
+<button id="add-lead-button" class="button button-secondary" type="button">＋ Lägg till testlead</button>
+</div>
+<article class="panel table-panel"><div class="table-toolbar">
+<label class="search-field" for="lead-search"><span aria-hidden="true">⌕</span><input id="lead-search" type="search" placeholder="Sök företag, e-post eller status" autocomplete="off"></label><span id="lead-table-count" class="muted small"></span>
+</div>
+<div class="table-scroll"><table>
+<thead><tr>
+<th scope="col">Företag / kontakt</th>
+<th scope="col">Status</th>
+<th scope="col">Källa</th>
+<th scope="col">Datatyp</th>
+<th scope="col"><span class="sr-only">Åtgärder</span></th>
+</tr></thead>
+<tbody id="leads-table-body"></tbody>
+</table></div>
+<p id="leads-empty" class="empty-state" hidden>Inga leads ännu. Starta en demoresa för att se hela arbetsflödet.</p></article></section>
+
+        <div id="research-sales-offers"></div></section><section id="view-research-sources" class="route-panel" data-panel="research/sources" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Godkända källor</h1>
+<p class="muted">Registrera underlag och dokumentera uttryckligt tillstånd före användning.</p>
+</div></div>
+<article class="panel source-panel"><div class="panel-heading">
+<div>
+<h3>Uttryckligen tillåtna researchkällor</h3>
+<p class="muted small">Varje lead behöver spårbart underlag. En källa måste godkännas innan uppgifterna används.</p>
+</div>
+<span id="sources-count" class="count-pill">—</span>
+</div>
+<div id="sources-list" class="sources-list"></div>
+<details class="admin-settings"><summary>Förbered en godkänd katalogkälla</summary><form id="source-config-form" class="config-form"><fieldset data-admin-only>
+<div class="form-grid">
+<div>
+<label for="source-kind">Tillåten källtyp</label><select id="source-kind"><option value="upload">Godkänd manuell import</option>
+<option value="https_json">Exakt godkänt HTTPS JSON-flöde</option></select>
+</div>
+<div>
+<label for="source-fetch-cost">Dokumenterad kostnad per hämtning, SEK</label><input id="source-fetch-cost" type="number" min="0" max="500" step="0.01" value="0" required>
+</div>
+</div>
+<label class="checkbox-label"><input id="source-fetch-enabled" type="checkbox"> Tillåt uttryckligen hämtning från just denna källa. Serverns separata nätverksgodkännande krävs också.</label><div class="form-grid">
+<div>
+<label for="source-id">Käll-ID</label><input id="source-id" required maxlength="80" pattern="[a-z0-9][a-z0-9_-]*" placeholder="min-katalog">
+</div>
+<div>
+<label for="source-name">Källans namn</label><input id="source-name" required maxlength="200" placeholder="Granskad företagskatalog">
+</div>
+</div>
+<label for="source-url">Källreferens, HTTPS-adress</label><input id="source-url" type="url" required maxlength="2000" placeholder="https://godkand-kalla.se/foretag"><label for="source-reference">Tillstånd, licens och granskningsreferens</label><input id="source-reference" required minlength="12" maxlength="500" placeholder="Dokumenterat tillstånd för insamling och användning"><label for="source-cost-evidence">Kostnadsunderlag, även om källan är kostnadsfri</label><input id="source-cost-evidence" required minlength="12" maxlength="500" placeholder="Dokumenterat kostnadsfritt tillstånd för denna import"><label class="checkbox-label" for="source-reviewed"><input id="source-reviewed" type="checkbox" required> Jag har granskat källans tillstånd och användningsvillkor</label><button id="source-config-save" class="button button-secondary" type="submit">Godkänn katalog för manuell import</button>
+</fieldset></form></details></article>
+          <p class="footnote">Nätverksresearch är en separat, avstängd förmåga tills en administratör uttryckligen har aktiverat den. Godkända källor utökar aldrig automatiskt tillåtna domäner.</p>
+<article class="panel"><h2>Importera godkänt dokumentunderlag</h2>
+<p class="muted small">Till exempel en licensierad marknadsrapport eller egna, uttryckligen godkända analysanteckningar. Fakta och antaganden hålls isär.</p>
+<form id="document-import-form" class="config-form"><fieldset data-admin-only>
+<div class="form-grid">
+<div>
+<label for="document-source">Godkänt käll-ID</label><input id="document-source" required maxlength="80" placeholder="min-marknadskalla">
+</div>
+<div>
+<label for="document-title">Dokumenttitel</label><input id="document-title" required minlength="3" maxlength="200">
+</div>
+</div>
+<label for="document-url">Exakt källadress, om tillämpligt</label><input id="document-url" type="url" maxlength="2000" placeholder="https://..."><label for="document-content">Källmaterial</label><textarea id="document-content" required minlength="20" maxlength="30000" rows="6" placeholder="Klistra in det uttryckligen godkända underlaget. Detta behandlas som opålitlig källdata, aldrig som systeminstruktioner."></textarea><button id="document-import-submit" class="button button-secondary">Spara godkänt underlag</button>
+</fieldset></form></article><article class="panel"><h2>Dokument &amp; källkonflikter</h2>
+<div id="v13-source-documents"></div></article></section><section id="view-research-reports" class="route-panel" data-panel="research/reports" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Källbelagda analyser</h1>
+<p class="muted">Sparade researchresultat, hämtningstid och redovisade osäkerheter.</p>
+</div></div>
+<div id="v13-research-reports"></div></section><section id="view-deliverables-library" class="route-panel" data-panel="deliverables/library" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Resultat som går att granska</h1>
+<p class="muted">Rapporter, planer och interna underlag med versionshistorik.</p>
+</div></div>
+<div>
+<div class="mission-toolbar">
+<label class="search-field"><span aria-hidden="true">⌕</span><input id="deliverable-search" type="search" placeholder="Sök titel, typ eller uppdrag" aria-label="Sök leverabler"></label><a href="/deliverables/new" data-route="/deliverables/new" class="button button-primary">＋ Ny beställning</a>
+</div>
+<div id="v13-deliverable-library" class="deliverable-grid"></div>
+</div></section><section id="view-deliverables-new" class="route-panel" data-panel="deliverables/new" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Förbered en leverabel</h1>
+<p class="muted">Välj typ och underlag. Generering är ett separat internt köbeslut.</p>
+</div></div>
+<article class="panel"><h3>Förbered en beställning</h3>
+<form id="factory-form" class="config-form"><fieldset data-operator-only>
+<label for="factory-type">Tjänstetyp</label><select id="factory-type"><option value="market_analysis">Marknadsanalys</option>
+<option value="seo_analysis">SEO-analys</option>
+<option value="content_calendar">Innehållskalender</option>
+<option value="marketing_strategy">Marknadsföringsstrategi</option>
+<option value="prospecting_report">Prospekteringsrapport</option></select><label for="factory-brief">Syfte, underlag och önskad omfattning</label><textarea id="factory-brief" rows="4" required minlength="20" maxlength="4000"></textarea><div class="form-grid">
+<div>
+<label for="factory-sources">Godkända käll-ID:n</label><input id="factory-sources" maxlength="800">
+</div>
+<div>
+<label for="factory-leads">Lead-ID:n</label><input id="factory-leads" maxlength="1500">
+</div>
+</div>
+<button id="factory-submit" type="submit" class="button button-primary">Skapa intern beställning</button>
+</fieldset></form>
+<p id="factory-feedback" class="inline-feedback" role="status"></p></article><div id="factory-orders" class="factory-orders"></div></section><section id="view-deliverables-detail" class="route-panel" data-panel="deliverables/detail" hidden="hidden"><div id="v13-deliverable-reader"></div></section><section id="view-finance-overview" class="route-panel" data-panel="finance/overview" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Ekonomi med verkliga belopp</h1>
+<p class="muted">Bokförd kostnad, reserverad budget och verifierad intäkt hålls isär.</p>
+</div></div>
+<section id="finance" class="finance-inner" aria-labelledby="finance-title"><div class="section-heading">
+<div>
+<span class="eyebrow">INTÄKTER &amp; KONTROLL</span><h2 id="finance-title">Ekonomi</h2>
+<p class="muted">Prissättning och godkännanden kontrolleras på servern.</p>
+</div>
+<span class="badge badge-neutral">Rapportvaluta SEK</span>
+</div>
+<div class="finance-summary">
+<article class="small-stat"><span>Verkliga utestående betalningar</span><strong id="finance-outstanding">—</strong></article><article class="small-stat"><span>Reserverade kostnader</span><strong id="finance-reserved">—</strong></article><article class="small-stat"><span>Verklig intäkt minus registrerad kostnad</span><strong id="finance-margin">—</strong></article><article class="small-stat"><span>Ordinarie prisgolv / max rabatt</span><strong id="finance-price-rule">—</strong></article>
+</div>
+<article class="panel table-panel"><div class="panel-heading">
+<h3>Betalningsbegäranden</h3>
+<span class="muted small">Godkännande → begäran → verifierad betalning</span>
+</div>
+<div class="table-scroll"><table>
+<thead><tr>
+<th scope="col">Referens</th>
+<th scope="col">Belopp exkl. moms</th>
+<th scope="col">Status</th>
+<th scope="col">Godkännande</th>
+<th scope="col">Nästa steg</th>
+</tr></thead>
+<tbody id="payments-table-body"></tbody>
+</table></div>
+<p id="payments-empty" class="empty-state" hidden>Inga betalningsbegäranden. En demoresa skapar ett utkast som väntar på ditt beslut.</p></article><p class="footnote">Simulerade intäkter märks som testdata. Utbetalningar, återbetalningar och överföringar görs inte av Jarvis.</p></section>
+
+        <div id="engine-metrics" class="engine-metrics" aria-label="Registrerad intern aktivitet"></div>
+          <div id="v13-finance-charts" class="dashboard-charts">
+<article class="panel"><h2>Kostnad &amp; verifierad intäkt</h2>
+<div id="finance-outcome-chart" class="chart-box"></div></article><article class="panel"><h2>Aktivitet per agent</h2>
+<div id="finance-agent-chart" class="chart-box"></div></article>
+<article class="panel"><h2>Verifierad verklig intäkt</h2>
+<div id="finance-revenue-chart" class="chart-box"></div>
+<p class="footnote">Uppskattningar och simulerade betalningar räknas aldrig som intäkt.</p></article>
+</div></section><section id="view-finance-costs" class="route-panel" data-panel="finance/costs" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Kostnader &amp; spårning</h1>
+<p class="muted">Leverantörsbelopp och SEK-bokföring visas med dokumenterad växelkurs.</p>
+</div></div>
+<div id="v13-cost-breakdown"></div></section><section id="view-finance-budget" class="route-panel" data-panel="finance/budget" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Budget &amp; mandat</h1>
+<p class="muted">Reserveringar minskar tillgängligt utrymme innan nya anrop får starta.</p>
+</div></div>
+<article class="panel budget-overview"><div class="panel-heading">
+<div>
+<span class="eyebrow">EKONOMISKT MANDAT</span><h2>Budget med framförhållning</h2>
+</div>
+<span id="budget-health" class="badge badge-neutral">Hämtar</span>
+</div>
+<div class="budget-main">
+<div>
+<span class="muted small">Återstående totalbudget</span><strong id="budget-remaining">—</strong>
+</div>
+<span id="budget-spend-note" class="muted small">Reserveringar räknas in innan nya uppgifter tillåts.</span>
+</div>
+<div class="progress-track" role="progressbar" aria-label="Använd totalbudget" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="budget-progress"><div id="budget-progress-bar"></div></div>
+<div class="budget-progress-labels">
+<span id="budget-used">— använt / reserverat</span><span id="budget-total">— totalt</span>
+</div>
+<div class="mini-budget-grid">
+<div>
+<span>AI-kostnader</span><strong id="budget-ai">—</strong>
+</div>
+<div>
+<span>Verktygskostnader</span><strong id="budget-tools">—</strong>
+</div>
+<div>
+<span>Infrastrukturkostnader</span><strong id="budget-infra">—</strong>
+</div>
+</div>
+<p id="budget-forecast" class="footnote"></p>
+<div id="budget-alerts" class="budget-alerts" aria-live="polite"></div></article>
+            <article class="panel next-actions"><div class="panel-heading">
+<div>
+<span class="eyebrow">DIN KONTROLLPUNKT</span><h2>Beslut som väntar</h2>
+</div>
+<span id="approval-count" class="count-pill">—</span>
+</div>
+<div id="approval-list" class="approval-list"><p class="empty-state">Hämtar väntande beslut…</p></div>
+<p class="footnote">En agent får aldrig godkänna sin egen betalningsbegäran.</p></article></section><section id="view-settings-ai" class="route-panel" data-panel="settings/ai" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>AI &amp; modeller</h1>
+<p class="muted">Separat administratörsbeslut krävs för kostnadsdrivande interna anrop.</p>
+</div></div>
+<article class="panel"><div class="panel-heading">
+<h3>AI-modell &amp; kostnadsram</h3>
+<span id="ai-state" class="badge badge-neutral">Hämtar</span>
+</div>
+<dl id="ai-summary" class="connection-list"></dl>
+<p class="footnote">API-nyckeln hanteras på servern och visas aldrig här. Nyckel och modellinställningar ger inte tillstånd till betalda anrop.</p>
+              <ul id="ai-blockers" class="blocker-list" aria-live="polite"></ul>
+              <details class="admin-settings"><summary>Granska modellinställningar</summary><form id="ai-config-form" class="config-form"><fieldset data-admin-only>
+<label for="ai-model">Godkänd modell</label><input id="ai-model" required maxlength="200" placeholder="openai/gpt-4o-mini"><div class="form-grid">
+<div>
+<label for="ai-call-sek">Kostnadstak per anrop, SEK</label><input id="ai-call-sek" type="number" min="0.01" max="500" step="0.01" required value="2">
+</div>
+<div>
+<label for="ai-max-tokens">Max antal svarstoken</label><input id="ai-max-tokens" type="number" min="1" max="4096" step="1" required value="512">
+</div>
+<div>
+<label for="ai-timeout">Timeout, sekunder</label><input id="ai-timeout" type="number" min="2" max="20" step="1" required value="20">
+</div>
+<div>
+<label for="ai-retries">Högsta antal säkra återförsök</label><input id="ai-retries" type="number" min="0" max="2" step="1" required value="1">
+</div>
+</div>
+<label for="ai-reason">Granskningsanteckning</label><input id="ai-reason" minlength="12" maxlength="500" required placeholder="Varför modell och kostnadsram är lämpliga"><button id="ai-config-save" class="button button-secondary" type="submit">Spara granskade modellinställningar</button>
+</fieldset></form>
+<p class="footnote">En ändrad konfiguration kan kräva ett nytt separat godkännande. Sparandet aktiverar aldrig AI automatiskt.</p></details>
+              <details class="admin-settings"><summary>Separat beslut om betalda interna AI-anrop</summary><form id="ai-activation-form" class="config-form"><fieldset data-admin-only>
+<p class="muted small">Godkännandet gäller aktuell modellrevision och budget. Det kan medföra verklig AI-kostnad. Ingen kontakt eller betalning aktiveras.</p>
+<label for="ai-activation-statement">Skriv I APPROVE PAID AI CALLS</label><input id="ai-activation-statement" required autocomplete="off" spellcheck="false" pattern="I APPROVE PAID AI CALLS"><label for="ai-activation-reason">Beslutsunderlag</label><input id="ai-activation-reason" minlength="12" maxlength="500" required><div class="button-row">
+<button id="ai-activate" type="submit" class="button button-secondary">Godkänn betalda interna AI-anrop</button><button id="ai-deactivate" type="button" class="button button-secondary">Spärra betalda AI-anrop</button>
+</div>
+</fieldset></form></details>
+              <div class="button-row metadata-actions"><button id="ai-model-refresh" type="button" class="button button-small button-secondary">Verifiera aktuell modellmetadata</button></div>
+              <details class="admin-settings"><summary>Registrera dokumenterad USD/SEK-kurs</summary><form id="fx-form" class="config-form"><fieldset data-admin-only>
+<label for="fx-rate">SEK per USD · verifierad kurs</label><input id="fx-rate" type="number" min="0.0001" max="1000" step="0.0001" required placeholder="Ange en granskad kurs"><label for="fx-source">Källa och granskningsreferens</label><input id="fx-source" minlength="12" maxlength="300" required><label for="fx-observed">Källans observationstid</label><input id="fx-observed" type="datetime-local" required><button id="fx-submit" class="button button-secondary" type="submit">Registrera granskad växelkurs</button>
+</fieldset></form>
+<p class="footnote">Ingen kurs hämtas eller antas automatiskt. Kursen används för AI-reserveringar och budgetspärrar.</p></details>
+              <form id="ai-test-form" class="config-form"><fieldset data-admin-only>
+<label for="ai-test-text">Kort intern testfråga</label><textarea id="ai-test-text" maxlength="2000" rows="2" required>Sammanfatta hur en intern AI-assistent kan förbereda oskickade B2B-utkast.</textarea><button id="ai-test-button" type="submit" class="button button-secondary">Testa AI · kan använda godkänd budget</button>
+</fieldset></form>
+<div id="ai-test-result" class="result-output" aria-live="polite"><p class="muted small">Inget testanrop har gjorts. Ett test använder den konfigurerade servermodellen och visar verkligt resultat eller blockeringsorsak.</p></div>
+            </article>
+            </section><section id="view-settings-integrations" class="route-panel" data-panel="settings/integrations" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>API &amp; integrationer</h1>
+<p class="muted">Serverlagrade nycklar. Ingen nyckel hämtas tillbaka till webbläsaren.</p>
+</div></div>
+<article class="panel"><div class="panel-heading">
+<h3>Behörighet &amp; anslutningar</h3>
+<span id="security-mode" class="badge badge-demo">DEMO</span>
+</div>
+<dl id="connections-list" class="connection-list"></dl>
+<p class="footnote">API-nycklar visas aldrig. I v1.3 är verkliga kundutskick och betalningar permanent spärrade.</p></article><article class="panel"><h2>Uppdatera en serverhemlighet</h2>
+<form id="secret-config-form" class="config-form"><fieldset data-admin-only>
+<label for="secret-name">Nyckeltyp</label><select id="secret-name"><option>OPENROUTER_API_KEY</option>
+<option>BREVO_API_KEY</option>
+<option>EMAIL_WEBHOOK_SECRET</option>
+<option>EMAIL_DELIVERY_WEBHOOK_SECRET</option>
+<option>STRIPE_SECRET_KEY</option>
+<option>STRIPE_WEBHOOK_SECRET</option></select><label for="secret-value">Nytt hemligt värde</label><input id="secret-value" type="password" autocomplete="new-password" required maxlength="10000"><p class="footnote">Sparandet aktiverar ingen leverantör. Befintliga jobb kan pausas när säkerhetsrevisionen ändras.</p>
+<button id="secret-submit" class="button button-secondary">Spara på servern</button>
+</fieldset></form></article></section><section id="view-settings-budget" class="route-panel" data-panel="settings/budget" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Bokför externa kostnader</h1>
+<p class="muted">Registrera endast faktiskt uppkomna kostnader med spårbar referens.</p>
+</div></div>
+<article class="panel"><h2>Registrera faktisk kostnad</h2>
+<form id="cost-form" class="config-form"><fieldset data-admin-only>
+<div class="form-grid">
+<div>
+<label for="cost-vendor">Leverantör</label><input id="cost-vendor" required maxlength="200">
+</div>
+<div>
+<label for="cost-category">Kategori</label><select id="cost-category"><option value="infrastructure">Infrastruktur</option>
+<option value="tools">Verktyg</option></select>
+</div>
+<div>
+<label for="cost-amount">Belopp i SEK</label><input id="cost-amount" type="number" min="0.01" step="0.01" required>
+</div>
+<div>
+<label for="cost-reference">Faktura / referens</label><input id="cost-reference" required maxlength="200">
+</div>
+</div>
+<button id="cost-submit" class="button button-secondary">Bokför faktisk kostnad</button>
+</fieldset></form>
+<p class="footnote">Detta registrerar en befintlig kostnad. Inget köp eller betalning utförs.</p></article><article class="panel"><h2>AI-budget per tidsperiod</h2>
+<p class="muted small">Separata tak inom befintligt ekonomiskt mandat. Alla väntande reserveringar räknas in.</p>
+<form id="ai-limits-form" class="config-form"><fieldset data-admin-only>
+<div class="form-grid">
+<div>
+<label for="ai-limit-day">Dygnstak, SEK</label><input id="ai-limit-day" type="number" min="0" max="500" step="0.01" required>
+</div>
+<div>
+<label for="ai-limit-month">Rullande 30-dagarstak, SEK</label><input id="ai-limit-month" type="number" min="0" max="500" step="0.01" required>
+</div>
+</div>
+<label for="ai-limit-reason">Granskningsanteckning</label><input id="ai-limit-reason" required minlength="12" maxlength="500"><button id="ai-limit-submit" class="button button-secondary">Spara granskade AI-gränser</button>
+</fieldset></form>
+<div id="ai-limit-status" class="inline-feedback"></div></article></section><section id="view-settings-security" class="route-panel" data-panel="settings/security" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Säkerhet &amp; behörigheter</h1>
+<p class="muted">Nödstopp, användarroller och systemets tydliga gränser.</p>
+</div></div>
+<article class="panel emergency-panel"><div class="panel-heading">
+<h3>Globalt nödstopp</h3>
+<span id="kill-status" class="badge badge-success">Hämtar</span>
+</div>
+<p>Nödstopp blockerar nya utskick, betalningsbegäranden, kostnadsdrivande AI-jobb och externa skrivningar. Befintliga data bevaras.</p>
+<button id="kill-switch-button" class="button button-danger button-wide" type="button">Aktivera nödstopp</button><p class="footnote">Att häva stoppet återupptar inte pausade jobb automatiskt.</p></article><div id="preparation-notice" class="notice notice-preparation">
+<span class="notice-icon" aria-hidden="true">◈</span><div>
+<strong>Förberedelser för verklig B2B-försäljning</strong><p id="preparation-status">Källor och utkast kan granskas här. Verklig kundkontakt kräver separata tester, juridisk granskning och uttryckligt godkännande.</p>
+</div>
+<span id="contact-gate-badge" class="badge badge-neutral">Kundkontakt spärrad</span>
+</div>
+          <article class="panel"><h2>Skapa internt användarkonto</h2>
+<form id="user-create-form" class="config-form"><fieldset data-admin-only>
+<div class="form-grid">
+<div>
+<label for="user-email">E-post</label><input id="user-email" type="email" required maxlength="254" autocomplete="off">
+</div>
+<div>
+<label for="user-new-role">Roll</label><select id="user-new-role"><option value="viewer">Läsbehörighet</option>
+<option value="operator">Operatör</option>
+<option value="admin">Administratör</option></select>
+</div>
+</div>
+<label for="user-password">Tillfälligt lösenord</label><input id="user-password" type="password" autocomplete="new-password" minlength="16" required><button id="user-create-submit" class="button button-secondary">Skapa internt konto</button>
+</fieldset></form></article></section><section id="view-settings-schedules" class="route-panel" data-panel="settings/schedules" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Interna scheman</h1>
+<p class="muted">Avstängda tills du granskar och uttryckligen aktiverar dem.</p>
+</div></div>
+<article class="panel"><div class="panel-heading"><div>
+<h3 id="internal-scheduling-title">Granskat internt körschema</h3>
+<p class="muted small">Europe/Stockholm · beständig kö · ingen extern kontakt</p>
+</div></div>
+<details class="admin-settings"><summary>Skapa eller uppdatera ett internt schema</summary><form id="internal-schedule-form" class="config-form"><fieldset data-admin-only>
+<div class="form-grid">
+<div>
+<label for="schedule-id">Schema-ID</label><input id="schedule-id" required maxlength="80" pattern="[a-z0-9][a-z0-9_-]*">
+</div>
+<div>
+<label for="schedule-kind">Intern uppgift</label><select id="schedule-kind"><option value="report">Verksamhetsrapport</option>
+<option value="mission">Nytt internt uppdrag</option>
+<option value="factory">Generera befintlig beställning</option>
+<option value="lead_rescore">Bedöm befintlig lead</option></select>
+</div>
+<div>
+<label for="schedule-cadence">Frekvens</label><select id="schedule-cadence"><option value="daily">Dagligen</option>
+<option value="interval">Intervall</option>
+<option value="weekly">Veckovis</option></select>
+</div>
+<div>
+<label for="schedule-time">Daglig tid · Europe/Stockholm</label><input id="schedule-time" type="time" value="08:00" required>
+</div>
+<div>
+<label for="schedule-interval">Intervall, minuter</label><input id="schedule-interval" type="number" min="15" max="10080" step="1" value="1440" required>
+</div>
+<div>
+<label for="schedule-runs">Högst körningar per dag</label><input id="schedule-runs" type="number" min="1" max="24" value="1" required>
+</div>
+<div>
+<label for="schedule-cost">Kostnadsram per dag, SEK</label><input id="schedule-cost" type="number" min="0.01" max="500" step="0.01" value="10" required>
+</div>
+<div>
+<label for="schedule-order">Befintligt beställnings-ID · för fabrik</label><input id="schedule-order" maxlength="100">
+</div>
+<div>
+<label for="schedule-lead">Befintligt lead-ID · för bedömning</label><input id="schedule-lead" maxlength="100">
+</div>
+<div>
+<label for="schedule-sources">Godkända käll-ID:n · för uppdrag</label><input id="schedule-sources" maxlength="800">
+</div>
+<div>
+<label for="schedule-weekday">Veckodag</label><select id="schedule-weekday"><option value="0">Måndag</option>
+<option value="1">Tisdag</option>
+<option value="2">Onsdag</option>
+<option value="3">Torsdag</option>
+<option value="4">Fredag</option>
+<option value="5">Lördag</option>
+<option value="6">Söndag</option></select>
+</div>
+<div>
+<label for="schedule-run-cost">Högst per körning, SEK</label><input id="schedule-run-cost" type="number" min="0.01" max="500" step="0.01" value="10" required>
+</div>
+</div>
+<label for="schedule-goal">Uppdragsmål · krävs för nya uppdrag</label><textarea id="schedule-goal" maxlength="4000" rows="2"></textarea><label for="schedule-reason">Granskningsanteckning</label><input id="schedule-reason" minlength="12" maxlength="500" required><label class="checkbox-label"><input id="schedule-enabled" type="checkbox"> Aktivera endast detta interna schema efter granskning</label><button id="schedule-submit" type="submit" class="button button-secondary">Spara granskat internt schema</button>
+</fieldset></form></details><p class="footnote">Schemat är avstängt tills du uttryckligen väljer aktivering. Nödstopp och ändrade säkerhetsinställningar kan kräva ny granskning. Rapportjobb gör inga AI-anrop.</p>
+<p id="schedule-feedback" class="inline-feedback" role="status"></p></article><article class="panel"><div class="panel-heading">
+<h3>Schemaläggning &amp; senaste körning</h3>
+<a href="/agents" class="button button-small button-secondary">Öppna Agent Control Center</a>
+</div>
+<div id="engine-schedules" class="sources-list"></div>
+<div id="job-feedback" class="inline-feedback" aria-live="polite">Inget jobb har behandlats från denna session.</div>
+<p class="footnote">Kön och scheman sparas i databasen. Att en agent är ledig betyder att inget arbete pågår.</p></article><article class="panel"><div class="panel-heading">
+<h3>Automatisk förberedelse</h3>
+<span id="pipeline-state" class="badge badge-neutral">Hämtar</span>
+</div>
+<dl id="pipeline-summary" class="connection-list"></dl>
+<p class="footnote">Schemat förbereder källor, leads och utkast. Nödstopp, granskning och separata kontaktspärrar gäller för varje steg.</p>
+              <details class="admin-settings"><summary>Planera lokalt förberedelsearbete</summary><form id="pipeline-config-form" class="config-form"><fieldset data-admin-only>
+<label class="checkbox-label" for="pipeline-enabled"><input id="pipeline-enabled" type="checkbox"> Schemalägg förberedelser</label><label for="pipeline-sources">Godkända käll-ID:n, separerade med kommatecken</label><input id="pipeline-sources" maxlength="800" placeholder="min-katalog"><div class="form-grid">
+<div>
+<label for="pipeline-interval">Intervall, minuter</label><input id="pipeline-interval" type="number" min="5" max="1440" step="1" value="60" required>
+</div>
+<div>
+<label for="pipeline-max-leads">Högst leads per omgång</label><input id="pipeline-max-leads" type="number" min="1" max="10" step="1" value="5" required>
+</div>
+<div>
+<label for="pipeline-followup">Uppföljning efter, dagar</label><input id="pipeline-followup" type="number" min="1" max="30" step="1" value="3" required>
+</div>
+</div>
+<label for="pipeline-reason">Granskningsanteckning</label><input id="pipeline-reason" minlength="12" maxlength="500" required><button id="pipeline-config-save" class="button button-secondary" type="submit">Spara förberedelseschema</button>
+</fieldset></form></details>
+            </article>
+          </section><section id="view-settings-logs" class="route-panel" data-panel="settings/logs" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">JARVIS / BUSINESS OS</p>
+<h1>Systemloggar &amp; kö</h1>
+<p class="muted">Beständiga händelser, kostnadsspår och återstartssäkra jobb.</p>
+</div></div>
+<article class="panel table-panel"><div class="panel-heading">
+<h3>Revisionslogg</h3>
+<span class="muted small">Senaste serverregistrerade händelser</span>
+</div>
+<div class="table-scroll"><table>
+<thead><tr>
+<th scope="col">Tidpunkt</th>
+<th scope="col">Aktör</th>
+<th scope="col">Beslut / händelse</th>
+<th scope="col">Detaljer</th>
+</tr></thead>
+<tbody id="audit-table-body"></tbody>
+</table></div>
+<p id="audit-empty" class="empty-state" hidden>Inga registrerade händelser ännu.</p></article><article class="panel table-panel"><div class="panel-heading">
+<h3>Jobbkö</h3>
+<span id="jobs-count" class="muted small"></span>
+</div>
+<div class="table-scroll"><table>
+<thead><tr>
+<th scope="col">Uppgift</th>
+<th scope="col">Status</th>
+<th scope="col">Försök</th>
+<th scope="col">Nästa steg</th>
+</tr></thead>
+<tbody id="jobs-table-body"></tbody>
+</table></div>
+<p id="jobs-empty" class="empty-state" hidden>Jobbkön är tom.</p></article><article class="panel"><div class="panel-heading">
+<h3>Manuell uppföljning</h3>
+<span id="tasks-count" class="count-pill">—</span>
+</div>
+<label for="tasks-filter" class="sr-only">Visa uppgifter</label><select id="tasks-filter"><option value="pending">Väntande uppgifter</option>
+<option value="all">Alla uppgifter</option>
+<option value="resolved">Granskade uppgifter</option></select><div id="tasks-list" class="tasks-list"></div>
+<p class="footnote">Tre äldre uppgifter med samma rubrik kan höra till separata acceptanstestfall: försäljning, support och faktura. Kund, testfall och datatyp visas här. Att markera en uppgift granskad godkänner ingen betalning eller kundkontakt.</p></article><div id="v13-system-traces" class="panel"></div></section>
+</div>
+<div id="legacy-storage" hidden="hidden">
+<section id="overview" aria-labelledby="overview-title" class="page-section" hidden="hidden">
+          <div class="page-heading">
+<div>
+<div class="eyebrow">VERKSAMHETENS ÖVERBLICK</div>
+<h1 id="overview-title">Din arbetsdag, samlad.</h1>
+<p class="muted">Affärer, agentbeslut och nästa steg — med tydliga gränser.</p>
+</div>
+<div class="heading-actions"><button id="demo-button" class="button button-primary" type="button"><span aria-hidden="true">＋</span> Starta demoresa</button></div>
+</div>
+          <div id="demo-notice" class="notice notice-demo">
+<span class="notice-icon" aria-hidden="true">◇</span><div>
+<strong>Demoläge — en trygg plats att testa.</strong><p>Kundresor och leverantörshändelser är simulerade. Inga verkliga utskick eller betalningsbegäranden görs.</p>
+</div>
+<span class="badge badge-demo">TESTDATA</span>
+</div>
+          <div class="data-boundary" aria-label="Åtskilda verkliga data och testdata">
+<div>
+<strong id="real-lead-count">—</strong><span>Verkliga leads</span>
+</div>
+<div>
+<strong id="demo-lead-count">—</strong><span>Demoleads</span>
+</div>
+<div>
+<strong id="legacy-lead-count">—</strong><span>Äldre, ej klassificerade</span>
+</div>
+<div>
+<strong id="demo-revenue">—</strong><span>Simulerad intäkt · aldrig verklig</span>
+</div>
+</div>
+          <p id="real-activity-note" class="footnote activity-note">Verkliga kontaktförsök och oskickade utkast hämtas.</p>
+<div class="metric-grid" aria-label="Verkliga affärsresultat">
             <article class="metric-card"><span class="metric-icon teal" aria-hidden="true">◎</span><span class="metric-label">Verkliga leads</span><strong id="metric-leads">—</strong><span id="metric-qualified" class="metric-detail">Kvalificering hämtas</span></article>
-            <article class="metric-card"><span class="metric-icon blue" aria-hidden="true">↗</span><span class="metric-label">Verkliga offerter</span><strong id="metric-proposals">—</strong><span id="metric-accepted" class="metric-detail">Accept hämtas</span></article>
+            <article class="metric-card"><span class="metric-icon blue" aria-hidden="true">→</span><span class="metric-label">Verkliga offerter</span><strong id="metric-proposals">—</strong><span id="metric-accepted" class="metric-detail">Accept hämtas</span></article>
             <article class="metric-card"><span class="metric-icon violet" aria-hidden="true">✓</span><span class="metric-label">Verkligt betalande kunder</span><strong id="metric-paying">—</strong><span class="metric-detail">Endast verifierade leverantörshändelser</span></article>
             <article class="metric-card"><span class="metric-icon amber" aria-hidden="true">kr</span><span class="metric-label">Verkliga bekräftade intäkter</span><strong id="metric-revenue">—</strong><span class="metric-detail">Bekräftad betalning är inte bankutbetalning</span></article>
           </div>
-          <div class="overview-grid"><article class="panel budget-overview"><div class="panel-heading"><div><span class="eyebrow">EKONOMISKT MANDAT</span><h2>Budget med framförhållning</h2></div><span id="budget-health" class="badge badge-neutral">Hämtar</span></div><div class="budget-main"><div><span class="muted small">Återstående totalbudget</span><strong id="budget-remaining">—</strong></div><span id="budget-spend-note" class="muted small">Reserveringar räknas in innan nya uppgifter tillåts.</span></div><div class="progress-track" role="progressbar" aria-label="Använd totalbudget" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="budget-progress"><div id="budget-progress-bar"></div></div><div class="budget-progress-labels"><span id="budget-used">— använt / reserverat</span><span id="budget-total">— totalt</span></div><div class="mini-budget-grid"><div><span>AI-kostnader</span><strong id="budget-ai">—</strong></div><div><span>Verktygskostnader</span><strong id="budget-tools">—</strong></div><div><span>Infrastrukturkostnader</span><strong id="budget-infra">—</strong></div></div><p id="budget-forecast" class="footnote"></p><div id="budget-alerts" class="budget-alerts" aria-live="polite"></div></article>
-            <article class="panel next-actions"><div class="panel-heading"><div><span class="eyebrow">DIN KONTROLLPUNKT</span><h2>Beslut som väntar</h2></div><span id="approval-count" class="count-pill">—</span></div><div id="approval-list" class="approval-list"><p class="empty-state">Hämtar väntande beslut…</p></div><p class="footnote">En agent får aldrig godkänna sin egen betalningsbegäran.</p></article></div>
-          <p class="footnote">Resultaten nedan avser verkliga affärer. Kontaktförsök, godkända utskick och simulerade händelser redovisas var för sig.</p><div class="funnel-strip" aria-label="Det verkliga försäljningsflödet"><div><strong id="funnel-contacts">—</strong><span>Leverantörsgodkända utskick</span></div><span class="funnel-arrow" aria-hidden="true">→</span><div><strong id="funnel-replies">—</strong><span>Svar</span></div><span class="funnel-arrow" aria-hidden="true">→</span><div><strong id="funnel-proposals">—</strong><span>Offerter / utkast</span></div><span class="funnel-arrow" aria-hidden="true">→</span><div><strong id="funnel-accepted">—</strong><span>Accepterade</span></div><span class="funnel-arrow" aria-hidden="true">→</span><div><strong id="funnel-paying">—</strong><span>Betalande kunder</span></div></div>
+          <div class="overview-grid"></div>
+          <p class="footnote">Resultaten nedan avser verkliga affärer. Kontaktförsök, godkända utskick och simulerade händelser redovisas var för sig.</p>
+<div class="funnel-strip" aria-label="Det verkliga försäljningsflödet">
+<div>
+<strong id="funnel-contacts">—</strong><span>Leverantörsgodkända utskick</span>
+</div>
+<span class="funnel-arrow" aria-hidden="true">→</span><div>
+<strong id="funnel-replies">—</strong><span>Svar</span>
+</div>
+<span class="funnel-arrow" aria-hidden="true">→</span><div>
+<strong id="funnel-proposals">—</strong><span>Offerter / utkast</span>
+</div>
+<span class="funnel-arrow" aria-hidden="true">→</span><div>
+<strong id="funnel-accepted">—</strong><span>Accepterade</span>
+</div>
+<span class="funnel-arrow" aria-hidden="true">→</span><div>
+<strong id="funnel-paying">—</strong><span>Betalande kunder</span>
+</div>
+</div>
         </section>
 
-        <section id="leads" class="page-section" aria-labelledby="leads-title"><div class="section-heading"><div><span class="eyebrow">FÖRSÄLJNINGSARBETET</span><h2 id="leads-title">Leads & affärer</h2><p class="muted">Spårbar källa, tydlig status och godkänd kontaktpolicy.</p></div><button id="add-lead-button" class="button button-secondary" type="button">＋ Lägg till testlead</button></div><article class="panel table-panel"><div class="table-toolbar"><label class="search-field" for="lead-search"><span aria-hidden="true">⌕</span><input id="lead-search" type="search" placeholder="Sök företag, e-post eller status" autocomplete="off"></label><span id="lead-table-count" class="muted small"></span></div><div class="table-scroll"><table><thead><tr><th scope="col">Företag / kontakt</th><th scope="col">Status</th><th scope="col">Källa</th><th scope="col">Datatyp</th><th scope="col"><span class="sr-only">Åtgärder</span></th></tr></thead><tbody id="leads-table-body"></tbody></table></div><p id="leads-empty" class="empty-state" hidden>Inga leads ännu. Starta en demoresa för att se hela arbetsflödet.</p></article></section>
-
-        <section id="preparation" class="page-section" aria-labelledby="preparation-title">
-          <div class="section-heading"><div><span class="eyebrow">FÖRBERED, GRANSKA, GODKÄNN</span><h2 id="preparation-title">Källor, AI & schemaläggning</h2><p class="muted">Interna AI-anrop har separat kostnadsgodkännande. Verkliga kundutskick och betalningar är spärrade i v1.2.</p></div><span class="badge badge-neutral">Jarvis Lite v1.2</span></div>
+        <section id="preparation" class="page-section" aria-labelledby="preparation-title" hidden="hidden">
+          <div class="section-heading">
+<div>
+<span class="eyebrow">FÖRBERED, GRANSKA, GODKÄNN</span><h2 id="preparation-title">Källor, AI &amp; schemaläggning</h2>
+<p class="muted">Interna AI-anrop har separat kostnadsgodkännande. Verkliga kundutskick och betalningar är spärrade i v1.3.</p>
+</div>
+<span class="badge badge-neutral">Jarvis Lite v1.3</span>
+</div>
           <div class="preparation-grid">
-            <article class="panel"><div class="panel-heading"><h3>AI-modell & kostnadsram</h3><span id="ai-state" class="badge badge-neutral">Hämtar</span></div><dl id="ai-summary" class="connection-list"></dl><p class="footnote">API-nyckeln hanteras på servern och visas aldrig här. Nyckel och modellinställningar ger inte tillstånd till betalda anrop.</p>
-              <ul id="ai-blockers" class="blocker-list" aria-live="polite"></ul>
-              <details class="admin-settings"><summary>Granska modellinställningar</summary><form id="ai-config-form" class="config-form"><fieldset data-admin-only><label for="ai-model">Godkänd modell</label><input id="ai-model" required maxlength="200" placeholder="openai/gpt-4o-mini"><div class="form-grid"><div><label for="ai-call-sek">Kostnadstak per anrop, SEK</label><input id="ai-call-sek" type="number" min="0.01" max="500" step="0.01" required value="2"></div><div><label for="ai-max-tokens">Max antal svarstoken</label><input id="ai-max-tokens" type="number" min="1" max="4096" step="1" required value="512"></div><div><label for="ai-timeout">Timeout, sekunder</label><input id="ai-timeout" type="number" min="2" max="20" step="1" required value="20"></div><div><label for="ai-retries">Högsta antal säkra återförsök</label><input id="ai-retries" type="number" min="0" max="2" step="1" required value="1"></div></div><label for="ai-reason">Granskningsanteckning</label><input id="ai-reason" minlength="12" maxlength="500" required placeholder="Varför modell och kostnadsram är lämpliga"><button id="ai-config-save" class="button button-secondary" type="submit">Spara granskade modellinställningar</button></fieldset></form><p class="footnote">En ändrad konfiguration kan kräva ett nytt separat godkännande. Sparandet aktiverar aldrig AI automatiskt.</p></details>
-              <details class="admin-settings"><summary>Separat beslut om betalda interna AI-anrop</summary><form id="ai-activation-form" class="config-form"><fieldset data-admin-only><p class="muted small">Godkännandet gäller aktuell modellrevision och budget. Det kan medföra verklig AI-kostnad. Ingen kontakt eller betalning aktiveras.</p><label for="ai-activation-statement">Skriv I APPROVE PAID AI CALLS</label><input id="ai-activation-statement" required autocomplete="off" spellcheck="false" pattern="I APPROVE PAID AI CALLS"><label for="ai-activation-reason">Beslutsunderlag</label><input id="ai-activation-reason" minlength="12" maxlength="500" required><div class="button-row"><button id="ai-activate" type="submit" class="button button-secondary">Godkänn betalda interna AI-anrop</button><button id="ai-deactivate" type="button" class="button button-secondary">Spärra betalda AI-anrop</button></div></fieldset></form></details>
-              <div class="button-row metadata-actions"><button id="ai-model-refresh" type="button" class="button button-small button-secondary">Verifiera aktuell modellmetadata</button></div>
-              <details class="admin-settings"><summary>Registrera dokumenterad USD/SEK-kurs</summary><form id="fx-form" class="config-form"><fieldset data-admin-only><label for="fx-rate">SEK per USD · verifierad kurs</label><input id="fx-rate" type="number" min="0.0001" max="1000" step="0.0001" required placeholder="Ange en granskad kurs"><label for="fx-source">Källa och granskningsreferens</label><input id="fx-source" minlength="12" maxlength="300" required><label for="fx-observed">Källans observationstid</label><input id="fx-observed" type="datetime-local" required><button id="fx-submit" class="button button-secondary" type="submit">Registrera granskad växelkurs</button></fieldset></form><p class="footnote">Ingen kurs hämtas eller antas automatiskt. Kursen används för AI-reserveringar och budgetspärrar.</p></details>
-              <form id="ai-test-form" class="config-form"><fieldset data-admin-only><label for="ai-test-text">Kort intern testfråga</label><textarea id="ai-test-text" maxlength="2000" rows="2" required>Sammanfatta hur en intern AI-assistent kan förbereda oskickade B2B-utkast.</textarea><button id="ai-test-button" type="submit" class="button button-secondary">Testa AI · kan använda godkänd budget</button></fieldset></form><div id="ai-test-result" class="result-output" aria-live="polite"><p class="muted small">Inget testanrop har gjorts. Ett test använder den konfigurerade servermodellen och visar verkligt resultat eller blockeringsorsak.</p></div>
-            </article>
-            <article class="panel"><div class="panel-heading"><h3>Automatisk förberedelse</h3><span id="pipeline-state" class="badge badge-neutral">Hämtar</span></div><dl id="pipeline-summary" class="connection-list"></dl><p class="footnote">Schemat förbereder källor, leads och utkast. Nödstopp, granskning och separata kontaktspärrar gäller för varje steg.</p>
-              <details class="admin-settings"><summary>Planera lokalt förberedelsearbete</summary><form id="pipeline-config-form" class="config-form"><fieldset data-admin-only><label class="checkbox-label" for="pipeline-enabled"><input id="pipeline-enabled" type="checkbox"> Schemalägg förberedelser</label><label for="pipeline-sources">Godkända käll-ID:n, separerade med kommatecken</label><input id="pipeline-sources" maxlength="800" placeholder="min-katalog"><div class="form-grid"><div><label for="pipeline-interval">Intervall, minuter</label><input id="pipeline-interval" type="number" min="5" max="1440" step="1" value="60" required></div><div><label for="pipeline-max-leads">Högst leads per omgång</label><input id="pipeline-max-leads" type="number" min="1" max="10" step="1" value="5" required></div><div><label for="pipeline-followup">Uppföljning efter, dagar</label><input id="pipeline-followup" type="number" min="1" max="30" step="1" value="3" required></div></div><label for="pipeline-reason">Granskningsanteckning</label><input id="pipeline-reason" minlength="12" maxlength="500" required><button id="pipeline-config-save" class="button button-secondary" type="submit">Spara förberedelseschema</button></fieldset></form></details>
-            </article>
-          </div>
-          <article class="panel source-panel"><div class="panel-heading"><div><h3>Uttryckligen tillåtna researchkällor</h3><p class="muted small">Varje lead behöver spårbart underlag. En källa måste godkännas innan uppgifterna används.</p></div><span id="sources-count" class="count-pill">—</span></div><div id="sources-list" class="sources-list"></div><details class="admin-settings"><summary>Förbered en godkänd katalogkälla</summary><form id="source-config-form" class="config-form"><fieldset data-admin-only><div class="form-grid"><div><label for="source-id">Käll-ID</label><input id="source-id" required maxlength="80" pattern="[a-z0-9][a-z0-9_-]*" placeholder="min-katalog"></div><div><label for="source-name">Källans namn</label><input id="source-name" required maxlength="200" placeholder="Granskad företagskatalog"></div></div><label for="source-url">Källreferens, HTTPS-adress</label><input id="source-url" type="url" required maxlength="2000" placeholder="https://godkand-kalla.se/foretag"><label for="source-reference">Tillstånd, licens och granskningsreferens</label><input id="source-reference" required minlength="12" maxlength="500" placeholder="Dokumenterat tillstånd för insamling och användning"><label for="source-cost-evidence">Kostnadsunderlag, även om källan är kostnadsfri</label><input id="source-cost-evidence" required minlength="12" maxlength="500" placeholder="Dokumenterat kostnadsfritt tillstånd för denna import"><label class="checkbox-label" for="source-reviewed"><input id="source-reviewed" type="checkbox" required> Jag har granskat källans tillstånd och användningsvillkor</label><button id="source-config-save" class="button button-secondary" type="submit">Godkänn katalog för manuell import</button></fieldset></form></details></article>
-          <article class="panel readiness-panel"><div class="panel-heading"><h3>Kundkontakt och betalningar är spärrade i v1.2</h3><span id="outreach-state" class="badge badge-neutral">Spärrad</span></div><dl id="outreach-summary" class="connection-list"></dl><p class="footnote">Historiska granskningsunderlag bevaras. v1.2 medger endast intern research, AI-bearbetning, offertutkast och leverabler. Kundutskick och betalningsåtgärder kan inte aktiveras i denna version.</p></article>
+            </div>
+          <article class="panel readiness-panel"><div class="panel-heading">
+<h3>Kundkontakt och betalningar är spärrade i v1.3</h3>
+<span id="outreach-state" class="badge badge-neutral">Spärrad</span>
+</div>
+<dl id="outreach-summary" class="connection-list"></dl>
+<p class="footnote">Historiska granskningsunderlag bevaras. v1.3 medger endast intern research, AI-bearbetning, offertutkast och leverabler. Kundutskick och betalningsåtgärder kan inte aktiveras i denna version.</p></article>
         </section>
 
-        <section id="finance" class="page-section" aria-labelledby="finance-title"><div class="section-heading"><div><span class="eyebrow">INTÄKTER & KONTROLL</span><h2 id="finance-title">Ekonomi</h2><p class="muted">Prissättning och godkännanden kontrolleras på servern.</p></div><span class="badge badge-neutral">Rapportvaluta SEK</span></div><div class="finance-summary"><article class="small-stat"><span>Verkliga utestående betalningar</span><strong id="finance-outstanding">—</strong></article><article class="small-stat"><span>Reserverade kostnader</span><strong id="finance-reserved">—</strong></article><article class="small-stat"><span>Verklig intäkt minus registrerad kostnad</span><strong id="finance-margin">—</strong></article><article class="small-stat"><span>Ordinarie prisgolv / max rabatt</span><strong id="finance-price-rule">—</strong></article></div><article class="panel table-panel"><div class="panel-heading"><h3>Betalningsbegäranden</h3><span class="muted small">Godkännande → begäran → verifierad betalning</span></div><div class="table-scroll"><table><thead><tr><th scope="col">Referens</th><th scope="col">Belopp exkl. moms</th><th scope="col">Status</th><th scope="col">Godkännande</th><th scope="col">Nästa steg</th></tr></thead><tbody id="payments-table-body"></tbody></table></div><p id="payments-empty" class="empty-state" hidden>Inga betalningsbegäranden. En demoresa skapar ett utkast som väntar på ditt beslut.</p></article><p class="footnote">Simulerade intäkter märks som testdata. Utbetalningar, återbetalningar och överföringar görs inte av Jarvis.</p></section>
+        <section id="operations" class="page-section" aria-labelledby="operations-title" hidden="hidden"><div class="section-heading">
+<div>
+<span class="eyebrow">SAMORDNAT ARBETE</span><h2 id="operations-title">Agenter &amp; arbetsflöden</h2>
+<p class="muted">Sex logiska agentroller, en gemensam uppsättning behörigheter.</p>
+</div>
+<button id="run-job-button" class="button button-secondary" type="button">▷ Bearbeta nästa jobb</button>
+</div>
+<div class="agent-grid">
+<article><span class="agent-symbol">C</span><div>
+<strong>CEO</strong><span>Prioritering &amp; rapporter</span>
+</div></article><article><span class="agent-symbol">R</span><div>
+<strong>Research</strong><span>Källor &amp; kvalificering</span>
+</div></article><article><span class="agent-symbol">S</span><div>
+<strong>Sales</strong><span>Dialog &amp; offertutkast</span>
+</div></article><article><span class="agent-symbol">D</span><div>
+<strong>Delivery</strong><span>Tjänstemall &amp; tester</span>
+</div></article><article><span class="agent-symbol">F</span><div>
+<strong>Finance</strong><span>Belopp &amp; betalningsstatus</span>
+</div></article><article><span class="agent-symbol">✓</span><div>
+<strong>Compliance</strong><span>Kontaktpolicy &amp; stopp</span>
+</div></article>
+</div>
+<div class="operations-grid"></div>
+<article class="panel report-panel"><div class="panel-heading">
+<h3>Senaste rapporten</h3>
+<span id="report-time" class="muted small"></span>
+</div>
+<p id="report-content" class="muted">Ingen rapport har skapats ännu.</p></article></section>
 
-        <section id="operations" class="page-section" aria-labelledby="operations-title"><div class="section-heading"><div><span class="eyebrow">SAMORDNAT ARBETE</span><h2 id="operations-title">Agenter & arbetsflöden</h2><p class="muted">Sex logiska agentroller, en gemensam uppsättning behörigheter.</p></div><button id="run-job-button" class="button button-secondary" type="button">▷ Bearbeta nästa jobb</button></div><div class="agent-grid"><article><span class="agent-symbol">C</span><div><strong>CEO</strong><span>Prioritering & rapporter</span></div></article><article><span class="agent-symbol">R</span><div><strong>Research</strong><span>Källor & kvalificering</span></div></article><article><span class="agent-symbol">S</span><div><strong>Sales</strong><span>Dialog & offertutkast</span></div></article><article><span class="agent-symbol">D</span><div><strong>Delivery</strong><span>Tjänstemall & tester</span></div></article><article><span class="agent-symbol">F</span><div><strong>Finance</strong><span>Belopp & betalningsstatus</span></div></article><article><span class="agent-symbol">✓</span><div><strong>Compliance</strong><span>Kontaktpolicy & stopp</span></div></article></div><div class="operations-grid"><article class="panel table-panel"><div class="panel-heading"><h3>Jobbkö</h3><span id="jobs-count" class="muted small"></span></div><div class="table-scroll"><table><thead><tr><th scope="col">Uppgift</th><th scope="col">Status</th><th scope="col">Försök</th><th scope="col">Nästa steg</th></tr></thead><tbody id="jobs-table-body"></tbody></table></div><p id="jobs-empty" class="empty-state" hidden>Jobbkön är tom.</p></article><article class="panel"><div class="panel-heading"><h3>Manuell uppföljning</h3><span id="tasks-count" class="count-pill">—</span></div><label for="tasks-filter" class="sr-only">Visa uppgifter</label><select id="tasks-filter"><option value="pending">Väntande uppgifter</option><option value="all">Alla uppgifter</option><option value="resolved">Granskade uppgifter</option></select><div id="tasks-list" class="tasks-list"></div><p class="footnote">Tre äldre uppgifter med samma rubrik kan höra till separata acceptanstestfall: försäljning, support och faktura. Kund, testfall och datatyp visas här. Att markera en uppgift granskad godkänner ingen betalning eller kundkontakt.</p></article></div><article class="panel report-panel"><div class="panel-heading"><h3>Senaste rapporten</h3><span id="report-time" class="muted small"></span></div><p id="report-content" class="muted">Ingen rapport har skapats ännu.</p></article></section>
-
-        <section id="business-engine" class="page-section v12-section" aria-labelledby="business-engine-title">
-          <div class="section-heading"><div><span class="eyebrow">VERKLIGT INTERNT ARBETE</span><h2 id="business-engine-title">Business Engine</h2><p class="muted">Beständiga uppdrag, källbelagda utkast och registrerad kostnad. Inga kundutskick eller betalningar.</p></div><span id="engine-status" class="badge badge-neutral">Hämtar</span></div>
-          <div id="engine-metrics" class="engine-metrics" aria-label="Registrerad intern aktivitet"></div>
-          <div class="preparation-grid"><article class="panel"><div class="panel-heading"><h3>Aktivitet per dag</h3><span class="muted small">Registrerade AI-anrop</span></div><div id="activity-chart" class="chart-box"></div></article><article class="panel"><div class="panel-heading"><h3>Kostnader per dag</h3><span class="muted small">SEK · registrerad AI-kostnad</span></div><div id="cost-chart" class="chart-box"></div></article></div>
-          <div class="preparation-grid"><article class="panel"><h3>Skapa internt uppdrag</h3><form id="mission-form" class="config-form"><fieldset data-operator-only><label for="mission-goal">Mål och avgränsning</label><textarea id="mission-goal" rows="3" required minlength="20" maxlength="4000" placeholder="Analysera möjligheter för AI-assistenten utifrån våra godkända företagsunderlag."></textarea><div class="form-grid"><div><label for="mission-sources">Godkända käll-ID:n</label><input id="mission-sources" maxlength="800" placeholder="granskad-katalog"></div><div><label for="mission-leads">Lead-ID:n, kommatecken</label><input id="mission-leads" maxlength="1500"></div><div><label for="mission-type">Intern leverabel</label><select id="mission-type" class="factory-type"><option value="market_analysis">Marknadsanalys</option><option value="seo_analysis">SEO-analys</option><option value="content_calendar">Innehållskalender</option><option value="marketing_strategy">Marknadsföringsstrategi</option><option value="prospecting_report">Prospekteringsrapport</option></select></div><div><label for="mission-cost">Högsta uppdragskostnad, SEK</label><input id="mission-cost" type="number" min="0.01" max="500" step="0.01" value="10" required></div><div><label for="mission-priority">Prioritet</label><select id="mission-priority"><option value="normal">Normal</option><option value="high">Hög</option><option value="low">Låg</option></select></div></div><button id="mission-submit" class="button button-primary" type="submit">Köa internt uppdrag</button></fieldset></form><p class="footnote">Servern kräver AI-beredskap, verifierat källunderlag, budget och tillåtna interna steg. Blockerade uppdrag visas med orsak.</p><p id="mission-feedback" class="inline-feedback" role="status"></p></article>
-          <article class="panel"><div class="panel-heading"><h3>Schemaläggning & senaste körning</h3><a href="/agents" class="button button-small button-secondary">Öppna Agent Control Center</a></div><div id="engine-schedules" class="sources-list"></div><div id="job-feedback" class="inline-feedback" aria-live="polite">Inget jobb har behandlats från denna session.</div><p class="footnote">Kön och scheman sparas i databasen. Att en agent är ledig betyder att inget arbete pågår.</p></article></div>
+        <section id="business-engine" class="page-section v12-section" aria-labelledby="business-engine-title" hidden="hidden">
+          <div class="section-heading">
+<div>
+<span class="eyebrow">VERKLIGT INTERNT ARBETE</span><h2 id="business-engine-title">Business Engine</h2>
+<p class="muted">Beständiga uppdrag, källbelagda utkast och registrerad kostnad. Inga kundutskick eller betalningar.</p>
+</div>
+<span id="engine-status" class="badge badge-neutral">Hämtar</span>
+</div>
+          <div class="preparation-grid">
+<article class="panel"><div class="panel-heading">
+<h3>Aktivitet per dag</h3>
+<span class="muted small">Registrerade AI-anrop</span>
+</div>
+<div id="activity-chart" class="chart-box"></div></article><article class="panel"><div class="panel-heading">
+<h3>Kostnader per dag</h3>
+<span class="muted small">SEK · registrerad AI-kostnad</span>
+</div>
+<div id="cost-chart" class="chart-box"></div></article>
+</div>
+          <div class="preparation-grid"></div>
         </section>
 
-        <section id="internal-scheduling" class="page-section v12-section" aria-labelledby="internal-scheduling-title"><article class="panel"><div class="panel-heading"><div><h3 id="internal-scheduling-title">Granskat internt körschema</h3><p class="muted small">Europe/Stockholm · beständig kö · ingen extern kontakt</p></div></div><details class="admin-settings"><summary>Skapa eller uppdatera ett internt schema</summary><form id="internal-schedule-form" class="config-form"><fieldset data-admin-only><div class="form-grid"><div><label for="schedule-id">Schema-ID</label><input id="schedule-id" required maxlength="80" pattern="[a-z0-9][a-z0-9_-]*"></div><div><label for="schedule-kind">Intern uppgift</label><select id="schedule-kind"><option value="report">Verksamhetsrapport</option><option value="mission">Nytt internt uppdrag</option><option value="factory">Generera befintlig beställning</option><option value="lead_rescore">Bedöm befintlig lead</option></select></div><div><label for="schedule-cadence">Frekvens</label><select id="schedule-cadence"><option value="daily">Dagligen</option><option value="interval">Intervall</option></select></div><div><label for="schedule-time">Daglig tid · Europe/Stockholm</label><input id="schedule-time" type="time" value="08:00" required></div><div><label for="schedule-interval">Intervall, minuter</label><input id="schedule-interval" type="number" min="15" max="10080" step="1" value="1440" required></div><div><label for="schedule-runs">Högst körningar per dag</label><input id="schedule-runs" type="number" min="1" max="24" value="1" required></div><div><label for="schedule-cost">Kostnadsram per dag, SEK</label><input id="schedule-cost" type="number" min="0.01" max="500" step="0.01" value="10" required></div><div><label for="schedule-order">Befintligt beställnings-ID · för fabrik</label><input id="schedule-order" maxlength="100"></div><div><label for="schedule-lead">Befintligt lead-ID · för bedömning</label><input id="schedule-lead" maxlength="100"></div><div><label for="schedule-sources">Godkända käll-ID:n · för uppdrag</label><input id="schedule-sources" maxlength="800"></div></div><label for="schedule-goal">Uppdragsmål · krävs för nya uppdrag</label><textarea id="schedule-goal" maxlength="4000" rows="2"></textarea><label for="schedule-reason">Granskningsanteckning</label><input id="schedule-reason" minlength="12" maxlength="500" required><label class="checkbox-label"><input id="schedule-enabled" type="checkbox"> Aktivera endast detta interna schema efter granskning</label><button id="schedule-submit" type="submit" class="button button-secondary">Spara granskat internt schema</button></fieldset></form></details><p class="footnote">Schemat är avstängt tills du uttryckligen väljer aktivering. Nödstopp och ändrade säkerhetsinställningar kan kräva ny granskning. Rapportjobb gör inga AI-anrop.</p><p id="schedule-feedback" class="inline-feedback" role="status"></p></article></section>
+        <section id="internal-scheduling" class="page-section v12-section" aria-labelledby="internal-scheduling-title" hidden="hidden"></section>
 
-        <section id="crm" class="page-section v12-section" aria-labelledby="crm-title"><div class="section-heading"><div><span class="eyebrow">KÄLLBELAGD KUNDRESEARCH</span><h2 id="crm-title">CRM & kvalificering</h2><p class="muted">Filtrera verkliga uppgifter och skapa interna bedömningar eller offertutkast. Inga meddelanden skickas.</p></div><span id="crm-count" class="count-pill">—</span></div><article class="panel"><form id="crm-filter-form" class="crm-filters"><div><label for="crm-query">Sök</label><input id="crm-query" type="search" maxlength="200" placeholder="Företag, domän eller behov"></div><div><label for="crm-industry">Bransch</label><input id="crm-industry" maxlength="120"></div><div><label for="crm-geography">Geografi</label><input id="crm-geography" maxlength="120"></div><div><label for="crm-mode">Datatyp</label><select id="crm-mode"><option value="REAL">Verkliga data</option><option value="DEMO">Demodata</option><option value="">Alla datatyper</option></select></div><div><label for="crm-sort">Sortering</label><select id="crm-sort"><option value="score">Högsta bedömning</option><option value="company">Företag</option><option value="newest">Senast insamlade</option></select></div><button type="submit" id="crm-filter-submit" class="button button-secondary">Filtrera</button></form><div id="crm-results" class="crm-results"></div></article></section>
+        <section id="crm" class="page-section v12-section" aria-labelledby="crm-title" hidden="hidden"><div class="section-heading">
+<div>
+<span class="eyebrow">KÄLLBELAGD KUNDRESEARCH</span><h2 id="crm-title">CRM &amp; kvalificering</h2>
+<p class="muted">Filtrera verkliga uppgifter och skapa interna bedömningar eller offertutkast. Inga meddelanden skickas.</p>
+</div>
+<span id="crm-count" class="count-pill">—</span>
+</div></section>
 
-        <section id="factory" class="page-section v12-section" aria-labelledby="factory-title"><div class="section-heading"><div><span class="eyebrow">INTERNA DIGITALA LEVERABLER</span><h2 id="factory-title">Tjänstefabrik</h2><p class="muted">Skapa, generera, granska och exportera. En intern export är inget leveransbesked till kund.</p></div><span id="factory-count" class="count-pill">—</span></div><div class="preparation-grid"><article class="panel"><h3>Förbered en beställning</h3><form id="factory-form" class="config-form"><fieldset data-operator-only><label for="factory-type">Tjänstetyp</label><select id="factory-type"><option value="market_analysis">Marknadsanalys</option><option value="seo_analysis">SEO-analys</option><option value="content_calendar">Innehållskalender</option><option value="marketing_strategy">Marknadsföringsstrategi</option><option value="prospecting_report">Prospekteringsrapport</option></select><label for="factory-brief">Syfte, underlag och önskad omfattning</label><textarea id="factory-brief" rows="4" required minlength="20" maxlength="4000"></textarea><div class="form-grid"><div><label for="factory-sources">Godkända käll-ID:n</label><input id="factory-sources" maxlength="800"></div><div><label for="factory-leads">Lead-ID:n</label><input id="factory-leads" maxlength="1500"></div></div><button id="factory-submit" type="submit" class="button button-primary">Skapa intern beställning</button></fieldset></form><p id="factory-feedback" class="inline-feedback" role="status"></p></article><article class="panel"><h3>Granskning före användning</h3><p class="muted factory-guidance">Resultatet ska innehålla spårbara källor, osäkerheter och faktisk AI-spårning. Administratören granskar resultatet separat. Saknat underlag eller avsaknad av AI-tillstånd ska ge en tydlig blockering.</p><p class="footnote">Generering kan använda den godkända AI-budgeten. Kundkontakt, betalning och externa systemändringar är spärrade.</p><div id="factory-types" class="sources-list"></div></article></div><div id="factory-orders" class="factory-orders"></div></section>
+        <section id="factory" class="page-section v12-section" aria-labelledby="factory-title" hidden="hidden"><div class="section-heading">
+<div>
+<span class="eyebrow">INTERNA DIGITALA LEVERABLER</span><h2 id="factory-title">Tjänstefabrik</h2>
+<p class="muted">Skapa, generera, granska och exportera. En intern export är inget leveransbesked till kund.</p>
+</div>
+<span id="factory-count" class="count-pill">—</span>
+</div>
+<div class="preparation-grid"><article class="panel"><h3>Granskning före användning</h3>
+<p class="muted factory-guidance">Resultatet ska innehålla spårbara källor, osäkerheter och faktisk AI-spårning. Administratören granskar resultatet separat. Saknat underlag eller avsaknad av AI-tillstånd ska ge en tydlig blockering.</p>
+<p class="footnote">Generering kan använda den godkända AI-budgeten. Kundkontakt, betalning och externa systemändringar är spärrade.</p>
+<div id="factory-types" class="sources-list"></div></article></div></section>
 
-        <section id="agent-center" class="page-section v12-section" aria-labelledby="agent-center-title"><div class="section-heading"><div><span class="eyebrow">AGENT CONTROL CENTER</span><h2 id="agent-center-title">Agenter med verifierbar status</h2><p class="muted">Status hämtas från sparade uppgifter och aktiva jobb. Ingen aktivitet simuleras.</p></div><div class="button-row"><a href="/#business-engine" class="button button-secondary">Till Business Engine</a><button id="agents-refresh" type="button" class="button button-secondary">Uppdatera status</button></div></div><div id="agent-role-cards" class="agent-control-grid"></div><article class="panel"><div class="panel-heading"><h3>Uppdrag & resultat</h3><span id="missions-count" class="muted small"></span></div><div id="missions-list" class="missions-list"></div></article><article class="panel agent-history"><div class="panel-heading"><h3>Agentuppgifter & körhistorik</h3><span id="agent-tasks-count" class="muted small"></span></div><div id="agent-tasks-list" class="missions-list"></div></article><article class="panel agent-history"><h3>Föreslagna interna åtgärder</h3><div id="agent-proposals" class="missions-list"></div><p class="footnote">Att granska ett förslag aktiverar inga externa åtgärder.</p></article></section>
+        <section id="agent-center" class="page-section v12-section" aria-labelledby="agent-center-title" hidden="hidden"><div class="section-heading">
+<div>
+<span class="eyebrow">AGENT CONTROL CENTER</span><h2 id="agent-center-title">Agenter med verifierbar status</h2>
+<p class="muted">Status hämtas från sparade uppgifter och aktiva jobb. Ingen aktivitet simuleras.</p>
+</div>
+<div class="button-row">
+<a href="/#business-engine" class="button button-secondary">Till Business Engine</a><button id="agents-refresh" type="button" class="button button-secondary">Uppdatera status</button>
+</div>
+</div>
+<article class="panel"><div class="panel-heading">
+<h3>Uppdrag &amp; resultat</h3>
+<span id="missions-count" class="muted small"></span>
+</div>
+<div id="missions-list" class="missions-list"></div></article></section>
 
-        <section id="security" class="page-section" aria-labelledby="security-title"><div class="section-heading"><div><span class="eyebrow">SÄKER DRIFT</span><h2 id="security-title">Gränser som håller</h2><p class="muted">Aktuellt driftläge, anslutningar och revisionsspår från databasen.</p></div></div><div class="security-grid"><article class="panel emergency-panel"><div class="panel-heading"><h3>Globalt nödstopp</h3><span id="kill-status" class="badge badge-success">Hämtar</span></div><p>Nödstopp blockerar nya utskick, betalningsbegäranden, kostnadsdrivande AI-jobb och externa skrivningar. Befintliga data bevaras.</p><button id="kill-switch-button" class="button button-danger button-wide" type="button">Aktivera nödstopp</button><p class="footnote">Att häva stoppet återupptar inte pausade jobb automatiskt.</p></article><article class="panel"><div class="panel-heading"><h3>Behörighet & anslutningar</h3><span id="security-mode" class="badge badge-demo">DEMO</span></div><dl id="connections-list" class="connection-list"></dl><p class="footnote">API-nycklar visas aldrig. I v1.2 är verkliga kundutskick och betalningar permanent spärrade.</p></article></div><article class="panel table-panel"><div class="panel-heading"><h3>Revisionslogg</h3><span class="muted small">Senaste serverregistrerade händelser</span></div><div class="table-scroll"><table><thead><tr><th scope="col">Tidpunkt</th><th scope="col">Aktör</th><th scope="col">Beslut / händelse</th><th scope="col">Detaljer</th></tr></thead><tbody id="audit-table-body"></tbody></table></div><p id="audit-empty" class="empty-state" hidden>Inga registrerade händelser ännu.</p></article></section>
-        <footer class="page-footer"><span>Jarvis Lite · Powered by Ignitic</span><span id="last-updated" aria-live="polite">Väntar på första uppdateringen</span></footer>
-      </main>
+        <section id="security" class="page-section" aria-labelledby="security-title" hidden="hidden"><div class="section-heading"><div>
+<span class="eyebrow">SÄKER DRIFT</span><h2 id="security-title">Gränser som håller</h2>
+<p class="muted">Aktuellt driftläge, anslutningar och revisionsspår från databasen.</p>
+</div></div>
+<div class="security-grid"></div></section>
+        <span id="nav-lead-count" hidden="hidden"></span>
+</div></main>
     </div>
   </div>
 
-  <dialog id="lead-dialog" aria-labelledby="lead-dialog-title"><form method="dialog" class="dialog-close-form"><button class="icon-button" aria-label="Stäng" type="submit">×</button></form><span class="eyebrow">AFFÄRSDETALJER</span><h2 id="lead-dialog-title">Lead</h2><dl id="lead-details" class="detail-list"></dl><div id="lead-dialog-actions" class="dialog-actions"></div></dialog>
-  <dialog id="new-lead-dialog" aria-labelledby="new-lead-title"><form method="dialog" class="dialog-close-form"><button class="icon-button" aria-label="Stäng" type="submit">×</button></form><span class="eyebrow">TYDLIGT MÄRKTA TESTDATA</span><h2 id="new-lead-title">Lägg till ett testlead</h2><p class="muted">Ingen kontakt tas. Testmottagaren måste också vara godkänd av serverns policy innan ett simulerat utskick kan göras.</p><form id="new-lead-form"><label for="new-lead-company">Företag</label><input id="new-lead-company" name="company" required maxlength="200"><label for="new-lead-email">Godkänd testadress</label><input id="new-lead-email" name="email" type="email" required maxlength="254" placeholder="Godkänd testmottagare"><p id="new-lead-error" class="form-error" role="alert" hidden></p><button id="new-lead-submit" class="button button-primary button-wide" type="submit">Spara testlead</button></form></dialog>
-  <dialog id="import-lead-dialog" aria-labelledby="import-lead-title"><form method="dialog" class="dialog-close-form"><button class="icon-button" aria-label="Stäng" type="submit">×</button></form><span class="eyebrow">SPÅRBART KÄLLUNDERLAG</span><h2 id="import-lead-title">Importera ett verkligt företagslead</h2><p class="muted">Registrerar uppgifter från en uttryckligen godkänd källa. Ingen kontakt tas och inga uppgifter skickas till en AI-leverantör.</p><form id="import-lead-form" class="config-form"><input id="import-source-id" type="hidden"><label for="import-company">Företagsnamn</label><input id="import-company" required maxlength="200"><label for="import-email">Företagets e-postadress</label><input id="import-email" type="email" required maxlength="254"><label for="import-domain">Företagsdomän</label><input id="import-domain" required maxlength="253" placeholder="foretag.se"><label for="import-reference">Källreferens för just detta företag</label><input id="import-reference" type="url" required maxlength="2000"><label for="import-evidence">Relevant underlag om inkommande kundförfrågningar</label><textarea id="import-evidence" required minlength="20" maxlength="4000" rows="4" placeholder="Dokumentera vad den godkända källan faktiskt visar. Hitta inte på ett behov."></textarea><div class="form-grid"><div><label for="import-entity">Företagstyp</label><select id="import-entity"><option value="unknown">Inte verifierad</option><option value="legal_person">Juridisk person</option><option value="sole_trader">Enskild näringsidkare</option></select></div><div><label for="import-address">Adresstyp</label><select id="import-address"><option value="unknown">Inte verifierad</option><option value="generic">Generisk företagsadress</option><option value="personal">Personlig adress</option></select></div></div><p class="footnote">Klassificering här är källunderlag, inte juridiskt tillstånd till marknadsföring. Serverns kvalitetskrav, dubblettkontroll och granskning gäller.</p><p id="import-lead-error" class="form-error" role="alert" hidden></p><button id="import-lead-save" class="button button-primary button-wide" type="submit">Importera från godkänd källa</button></form></dialog>
+  <dialog id="lead-dialog" aria-labelledby="lead-dialog-title"><form method="dialog" class="dialog-close-form"><button class="icon-button" aria-label="Stäng" type="submit">×</button></form>
+<span class="eyebrow">AFFÄRSDETALJER</span><h2 id="lead-dialog-title">Lead</h2>
+<dl id="lead-details" class="detail-list"></dl>
+<div id="lead-dialog-actions" class="dialog-actions"></div></dialog>
+  <dialog id="new-lead-dialog" aria-labelledby="new-lead-title"><form method="dialog" class="dialog-close-form"><button class="icon-button" aria-label="Stäng" type="submit">×</button></form>
+<span class="eyebrow">TYDLIGT MÄRKTA TESTDATA</span><h2 id="new-lead-title">Lägg till ett testlead</h2>
+<p class="muted">Ingen kontakt tas. Testmottagaren måste också vara godkänd av serverns policy innan ett simulerat utskick kan göras.</p>
+<form id="new-lead-form">
+<label for="new-lead-company">Företag</label><input id="new-lead-company" name="company" required maxlength="200"><label for="new-lead-email">Godkänd testadress</label><input id="new-lead-email" name="email" type="email" required maxlength="254" placeholder="Godkänd testmottagare"><p id="new-lead-error" class="form-error" role="alert" hidden></p>
+<button id="new-lead-submit" class="button button-primary button-wide" type="submit">Spara testlead</button>
+</form></dialog>
+  <dialog id="import-lead-dialog" aria-labelledby="import-lead-title"><form method="dialog" class="dialog-close-form"><button class="icon-button" aria-label="Stäng" type="submit">×</button></form>
+<span class="eyebrow">SPÅRBART KÄLLUNDERLAG</span><h2 id="import-lead-title">Importera ett verkligt företagslead</h2>
+<p class="muted">Registrerar uppgifter från en uttryckligen godkänd källa. Ingen kontakt tas och inga uppgifter skickas till en AI-leverantör.</p>
+<form id="import-lead-form" class="config-form">
+<input id="import-source-id" type="hidden"><label for="import-company">Företagsnamn</label><input id="import-company" required maxlength="200"><label for="import-email">Företagets e-postadress</label><input id="import-email" type="email" required maxlength="254"><label for="import-domain">Företagsdomän</label><input id="import-domain" required maxlength="253" placeholder="foretag.se"><label for="import-reference">Källreferens för just detta företag</label><input id="import-reference" type="url" required maxlength="2000"><label for="import-evidence">Relevant underlag om inkommande kundförfrågningar</label><textarea id="import-evidence" required minlength="20" maxlength="4000" rows="4" placeholder="Dokumentera vad den godkända källan faktiskt visar. Hitta inte på ett behov."></textarea><div class="form-grid">
+<div>
+<label for="import-entity">Företagstyp</label><select id="import-entity"><option value="unknown">Inte verifierad</option>
+<option value="legal_person">Juridisk person</option>
+<option value="sole_trader">Enskild näringsidkare</option></select>
+</div>
+<div>
+<label for="import-address">Adresstyp</label><select id="import-address"><option value="unknown">Inte verifierad</option>
+<option value="generic">Generisk företagsadress</option>
+<option value="personal">Personlig adress</option></select>
+</div>
+</div>
+<p class="footnote">Klassificering här är källunderlag, inte juridiskt tillstånd till marknadsföring. Serverns kvalitetskrav, dubblettkontroll och granskning gäller.</p>
+<p id="import-lead-error" class="form-error" role="alert" hidden></p>
+<button id="import-lead-save" class="button button-primary button-wide" type="submit">Importera från godkänd källa</button>
+</form></dialog>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>
