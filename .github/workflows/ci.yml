@@ -133,13 +133,7 @@ jobs:
       - name: Backend unit, integration and system tests
         env:
           CGO_ENABLED: 1
-          # Exercise local fixtures without delivering email or calling vendors.
-          HTTP_PROXY: http://127.0.0.1:9
-          HTTPS_PROXY: http://127.0.0.1:9
-          http_proxy: http://127.0.0.1:9
-          https_proxy: http://127.0.0.1:9
-          NO_PROXY: localhost,127.0.0.1
-          no_proxy: localhost,127.0.0.1
+        # Shared test helpers reject HTTP traffic before it reaches a provider.
         run: go test ./tests/...
       - name: PostgreSQL migration regression tests
         env:
