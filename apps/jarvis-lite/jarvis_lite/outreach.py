@@ -163,11 +163,13 @@ def status(tx):
                     and os.getenv("JARVIS_ALLOW_LIVE", "false").lower() == "true")
     return {"config": config, "runtime_contact_enabled": runtime, "approval_current": approval_current,
             "general_live_authorized": general_live,
-            "live_contact_authorized": runtime and general_live and approval_current and all(checks.values()),
+            "release_locked": policy.INTERNAL_ONLY_RELEASE,
+            "live_contact_authorized": not policy.INTERNAL_ONLY_RELEASE and runtime and general_live and approval_current and all(checks.values()),
             "checks": checks, "blocked_reasons": [key for key, ok in checks.items() if not ok]
                 + ([] if runtime else ["runtime_contact_disabled"])
                 + ([] if general_live else ["general_live_approval_required"])
-                + ([] if approval_current else ["explicit_contact_approval_required"]),
+                + ([] if approval_current else ["explicit_contact_approval_required"])
+                + (["internal_only_release"] if policy.INTERNAL_ONLY_RELEASE else []),
             "verification_kind": "operator_evidence_review", "test_scope": "isolated_offline_safety_probe",
             "native_brevo_webhook_signature": False, "delivery_gateway_required": True}
 

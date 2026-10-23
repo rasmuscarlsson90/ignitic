@@ -21,7 +21,8 @@ from .policy import PolicyError
 
 
 KINDS = frozenset({"demo_journey", "research", "qualify", "follow_up", "daily_report",
-                   "pipeline_advance", "source_research"})
+                   "pipeline_advance", "source_research", "internal_agent", "factory_generate",
+                   "lead_rescore", "sales_prepare", "operations_report"})
 ACTIVE = frozenset({"queued", "leased"})
 MAX_ATTEMPTS = 3
 LEASE_SECONDS = 90
@@ -39,6 +40,12 @@ def _epoch(settings: dict) -> int:
 def _save(tx, job: dict) -> dict:
     job["updated_at"] = tx.now
     return tx.put("job", job["id"], job)
+
+
+def _sync_agent_stop(tx, job: dict, code: str) -> None:
+    if job["kind"] == "internal_agent":
+        from . import engine
+        engine.record_job_failure(tx, job, code)
 
 
 def _job(tx, job_id: str) -> dict:
@@ -101,6 +108,7 @@ def pause_for_kill(tx, actor: Any = "system") -> int:
         if job["status"] in ACTIVE:
             job.update(status="paused", paused_reason="kill_switch", lease_token=None, lease_until=None)
             _save(tx, job)
+            _sync_agent_stop(tx, job, "kill_switch")
             tx.audit(_identity(actor), "job.paused", {"job_id": job["id"], "reason": "kill_switch"})
             count += 1
     return count
@@ -115,6 +123,7 @@ def pause(tx, job_id: str, *, actor: Any, reason: str = "Administrator paused jo
         raise PolicyError("reconciliation_required", "An uncertain outcome cannot be bypassed by pausing the job")
     job.update(status="paused", paused_reason=reason[:300], lease_token=None, lease_until=None)
     result = _save(tx, job)
+    _sync_agent_stop(tx, job, "administrator_paused")
     tx.audit(_identity(actor), "job.paused", {"job_id": job_id, "reason": reason[:300]})
     return result
 
@@ -157,6 +166,39 @@ def reconcile(tx, job_id: str, *, outcome: str, reason: str, actor: Any) -> dict
     return result
 
 
+def cancel(tx, job_id: str, *, actor: Any, reason: str) -> dict:
+    policy.require_admin(actor)
+    if not isinstance(reason, str) or not 8 <= len(reason.strip()) <= 500:
+        raise PolicyError("cancel_reason", "A meaningful cancellation reason is required", 422)
+    job = _job(tx, job_id)
+    if job["status"] == "uncertain":
+        raise PolicyError("reconciliation_required", "Unknown provider outcomes require evidence-based reconciliation")
+    if job["status"] in {"completed", "cancelled"}:
+        return job
+    job.update(status="cancelled", lease_token=None, lease_until=None,
+               cancelled_at=tx.now, cancelled_by=_identity(actor), cancellation_reason=reason.strip())
+    result = _save(tx, job)
+    if job["kind"] == "internal_agent":
+        from . import engine
+        engine.record_job_cancel(tx, job)
+    tx.audit(actor, "job.cancelled", {"job_id": job_id, "reason": reason.strip(), "resends_authorized": False})
+    return result
+
+
+def snapshot(tx) -> list[dict]:
+    queued = sorted((j for j in tx.list("job") if j["status"] == "queued"),
+                    key=lambda j: (int(j.get("priority", 50)), j["run_at"], j["created_at"], j["id"]))
+    positions = {job["id"]: i + 1 for i, job in enumerate(queued)}
+    tasks = {item["id"]: item for item in tx.list("agent_task")}
+    output = []
+    for job in reversed(tx.list("job")):
+        task = tasks.get(job.get("payload", {}).get("task_id"), {})
+        output.append({**job, "queue_position": positions.get(job["id"]),
+                       "agent_role": task.get("role") or job.get("payload", {}).get("role"),
+                       "error_message": job.get("error_code") or job.get("paused_reason")})
+    return output[:500]
+
+
 def claim(db, *, lease_seconds: float = LEASE_SECONDS) -> dict | None:
     if not 1 <= lease_seconds <= 600:
         raise ValueError("Lease duration must be between 1 and 600 seconds")
@@ -165,7 +207,7 @@ def claim(db, *, lease_seconds: float = LEASE_SECONDS) -> dict | None:
         if settings.get("kill_switch"):
             pause_for_kill(tx)
             return None
-        jobs = sorted(tx.list("job"), key=lambda j: (j["run_at"], j["created_at"], j["id"]))
+        jobs = sorted(tx.list("job"), key=lambda j: (int(j.get("priority", 50)), j["run_at"], j["created_at"], j["id"]))
         for job in jobs:
             if job["status"] not in ACTIVE:
                 continue
@@ -173,6 +215,7 @@ def claim(db, *, lease_seconds: float = LEASE_SECONDS) -> dict | None:
             if job.get("safety_epoch", 0) != _epoch(settings):
                 job.update(status="paused", paused_reason="safety_epoch_changed", lease_token=None, lease_until=None)
                 _save(tx, job)
+                _sync_agent_stop(tx, job, "safety_epoch_changed")
                 tx.audit("system", "job.paused", {"job_id": job["id"], "reason": "safety_epoch_changed"})
                 continue
             if job["status"] == "leased" and (job.get("lease_until") or 0) > tx.now:
@@ -182,6 +225,7 @@ def claim(db, *, lease_seconds: float = LEASE_SECONDS) -> dict | None:
             if job["attempts"] >= MAX_ATTEMPTS:
                 job.update(status="failed", error_code="lease_exhausted", lease_token=None, lease_until=None)
                 _save(tx, job)
+                _sync_agent_stop(tx, job, "lease_exhausted")
                 _task(tx, job, "The job exhausted its bounded attempts after interrupted workers")
                 continue
             # Local work commits with the result. Provider handlers additionally
@@ -200,6 +244,20 @@ def _dispatch(tx, job: dict) -> dict:
     policy.guard(tx, "job", actor=actor)
     payload = job["payload"]
     key = "job:" + job["id"]
+    from . import operations
+    operations.validate_job(tx, job)
+    if job["kind"] == "internal_agent":
+        from . import engine
+        return engine.execute_agent(tx, job)
+    if job["kind"] == "factory_generate":
+        from . import factory
+        return factory.generate(tx, payload["order_id"], actor, key)
+    if job["kind"] in {"lead_rescore", "sales_prepare"}:
+        from . import intelligence
+        method = intelligence.score_lead if job["kind"] == "lead_rescore" else intelligence.prepare_sales
+        return method(tx, payload["lead_id"], actor, key)
+    if job["kind"] == "operations_report":
+        return operations.daily_report(tx, actor, key)
     if job["kind"] in {"pipeline_advance", "source_research"}:
         from . import pipeline
         config = pipeline.status(tx)
@@ -265,6 +323,7 @@ def _failure(db, claimed: dict, error: Exception) -> None:
         else:
             job.update(status="queued", run_at=tx.now + min(60, 2 ** job["attempts"]))
         _save(tx, job)
+        _sync_agent_stop(tx, job, str(code))
         # Exception messages may contain provider responses/secrets. Store only a code.
         tx.audit("system", "job.interrupted", {"job_id": job["id"], "status": job["status"], "code": str(code)[:100]})
 
@@ -281,8 +340,10 @@ def run_once(db) -> dict | None:
                 return job
             if settings.get("kill_switch") or job["safety_epoch"] != _epoch(settings):
                 job.update(status="paused", paused_reason="kill_switch", lease_token=None, lease_until=None)
+                _save(tx, job)
+                _sync_agent_stop(tx, job, "kill_switch")
                 tx.audit("system", "job.paused", {"job_id": job["id"], "reason": "kill_switch"})
-                return _save(tx, job)
+                return job
             tx.execution_fence = (job["id"], claimed["lease_token"])
             result = _dispatch(tx, job)
             # Provider outbox checkpoints can release the lock. Do not overwrite
@@ -292,10 +353,15 @@ def run_once(db) -> dict | None:
             if (current["status"] != "leased" or current.get("lease_token") != claimed["lease_token"]
                     or settings.get("kill_switch") or current["safety_epoch"] != _epoch(settings)):
                 return current
-            if isinstance(result, dict) and result.get("status") == "UNCERTAIN":
+            if isinstance(result, dict) and result.get("status") in {"UNCERTAIN", "UNKNOWN"}:
                 job.update(status="uncertain", result=result, lease_token=None, lease_until=None,
                            paused_reason="provider_outcome_requires_review", error_code="provider_uncertain")
                 _task(tx, job, "Provider outcome is unknown; automatic retries are forbidden")
+                return _save(tx, job)
+            if isinstance(result, dict) and result.get("status") == "BLOCKED":
+                job.update(status="paused", result=result, lease_token=None, lease_until=None,
+                           paused_reason=result.get("reason", "internal_approval_required"),
+                           error_code=result.get("code", "internal_blocked"))
                 return _save(tx, job)
             job.update(status="completed", result=result, lease_token=None, lease_until=None,
                        completed_at=tx.now, error_code=None)
@@ -346,6 +412,8 @@ def schedule_due(tx) -> list[dict]:
             scheduled.append(enqueue(tx, "follow_up", payload, idempotency_key=key))
     from . import pipeline
     scheduled.extend(pipeline.schedule_due(tx))
+    from . import operations
+    scheduled.extend(operations.schedule_due(tx))
     return scheduled
 
 

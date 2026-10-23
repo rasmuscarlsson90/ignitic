@@ -36,7 +36,8 @@ _DNS_SLOTS = threading.BoundedSemaphore(2)
 SOURCE_KEYS = {"name", "kind", "url", "approved", "license_reviewed", "legal_review_reference",
                "fetch_enabled", "minimum_quality", "minimum_interval_seconds", "cost_minor",
                "cost_evidence", "data_mode"}
-RECORD_KEYS = {"company", "email", "domain", "source_url", "evidence", "entity_type", "address_type"}
+RECORD_KEYS = {"company", "email", "domain", "source_url", "evidence", "entity_type", "address_type",
+               "website", "industry", "geography", "description"}
 
 
 def _text(value, name, maximum=2000, minimum=1):
@@ -154,8 +155,20 @@ def _normalize(source, record):
     factors = {"company": 20, "business_email": 20, "source_citation": 20, "evidence": 20,
                "domain_matches_email": 10 if domain == email.rsplit("@", 1)[1] else 0,
                "contact_classification": 10 if entity != "unknown" and address != "unknown" else 0}
+    metadata = {}
+    for name, limit in (("industry", 200), ("geography", 200), ("description", 2000)):
+        value = record.get(name, "")
+        if value:
+            metadata[name] = _text(value, name, limit)
+        elif not isinstance(value, str):
+            raise PolicyError("research_record", f"{name} must be text", 422)
+    if record.get("website"):
+        metadata["website"] = _url(record["website"])
+    elif not isinstance(record.get("website", ""), str):
+        raise PolicyError("research_record", "website must be an attributed HTTPS URL", 422)
     return {"company": company, "email": email, "domain": domain, "entity_type": entity,
             "address_type": address, "source_url": citation, "need": evidence,
+            **metadata,
             "quality": {"score": sum(factors.values()), "factors": factors,
                         "method": "attributed-directory-v1.1", "not_legal_clearance": True}}
 
@@ -193,13 +206,22 @@ def ingest(tx, source_id, records, actor, key):
                        "source_version": source["version"], "license_review_reference": source["legal_review_reference"],
                        "evidence": record["need"], "untrusted_input": True}
         citations = list(lead.get("citations", []))
-        if not any(item.get("source_id") == source_id and item.get("source_url") == record["source_url"]
+        if not any(item.get("source_id") == source_id and item.get("source_version") == source["version"]
+                   and item.get("source_url") == record["source_url"]
                    and item.get("evidence") == record["need"] for item in citations):
             citations.append(attribution)
         lead.update(citations=citations[-50:], quality=quality, record_mode="DEMO" if demo else "REAL",
                     provenance={"kind": "approved_source", "source_id": source_id, "approved": True,
                                 "source_version": source["version"], "license_reviewed": True,
                                 "review_reference": source["legal_review_reference"]})
+        metadata_evidence = dict(lead.get("metadata_evidence", {}))
+        for name in ("website", "industry", "geography", "description"):
+            if record.get(name):
+                lead[name] = record[name]
+                metadata_evidence[name] = {"source_id": source_id, "source_url": record["source_url"],
+                    "source_version": source["version"], "collected_at": tx.now, "untrusted_input": True}
+        if metadata_evidence:
+            lead["metadata_evidence"] = metadata_evidence
         tx.put("lead", lead["id"], lead)
         lead_ids.append(lead["id"])
     result = tx.create("research_run", {"source_id": source_id, "source_version": source["version"],

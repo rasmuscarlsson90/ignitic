@@ -172,6 +172,8 @@ def test_modified_payment_invalidates_approval_and_kill_blocks_request(db):
 
 
 def test_demo_payment_cannot_authorize_live_request_without_production_delivery(db, monkeypatch):
+    # Reach the retained payment delivery guard below the v1.2 release lock.
+    monkeypatch.setattr(policy, "INTERNAL_ONLY_RELEASE", False)
     monkeypatch.setenv("JARVIS_ALLOW_LIVE", "true")
     calls = []
     class NeverCalled:
@@ -307,6 +309,8 @@ def test_llm_cannot_issue_payment_or_tool_actions(db):
 
 
 def live_email_setup(db, monkeypatch):
+    # Test the retained mocked provider contract below the outer release lock.
+    monkeypatch.setattr(policy, "INTERNAL_ONLY_RELEASE", False)
     monkeypatch.setenv("JARVIS_ALLOW_LIVE", "true")
     monkeypatch.setenv("JARVIS_ALLOW_LIVE_CONTACT", "true")
     with db.transaction() as tx:

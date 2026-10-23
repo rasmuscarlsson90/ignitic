@@ -18,6 +18,8 @@ GATEWAY_SECRET = "synthetic-delivery-gateway-secret"
 
 @pytest.fixture
 def db(tmp_path, monkeypatch):
+    # Offline adapter contract coverage; v1.2's outer release lock is tested separately.
+    monkeypatch.setattr(policy, "INTERNAL_ONLY_RELEASE", False)
     monkeypatch.setenv("JARVIS_ENV", "test")
     monkeypatch.setenv("JARVIS_SESSION_SECRET", "outreach-tests-not-a-production-secret")
     monkeypatch.delenv("JARVIS_ENCRYPTION_KEY", raising=False)

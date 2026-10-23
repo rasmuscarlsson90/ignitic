@@ -7,6 +7,9 @@ from urllib.parse import urlparse
 
 from cryptography.fernet import Fernet
 
+# v1.2 is an internal-work release. Runtime flags cannot lift this release lock.
+INTERNAL_ONLY_RELEASE = True
+
 
 class PolicyError(Exception):
     def __init__(self, code, message, status=409):
@@ -71,7 +74,13 @@ def guard(tx, action, actor=None, lead=None):
                 or executing.get("lease_token") != fence[1]
                 or (executing.get("lease_until") or 0) <= tx.now):
             raise PolicyError("job_lease_revoked", "The job was paused or its execution lease was revoked; no provider action is authorized", 423)
-    if settings["mode"] == "LIVE":
+    if getattr(tx, "schedule_context", None):
+        from . import operations
+        operations.guard_scheduled(tx)
+    business_actions = {"contact", "email", "send_email", "proposal", "external_write", "payment_request"}
+    if INTERNAL_ONLY_RELEASE and settings["mode"] == "LIVE" and action in business_actions:
+        raise PolicyError("internal_only_release", "Jarvis Lite v1.2 prohibits external customer contact and payment requests", 403)
+    if settings["mode"] == "LIVE" and action in business_actions:
         if os.getenv("JARVIS_ALLOW_LIVE", "false").lower() != "true" or not settings.get("live_approved"):
             raise PolicyError("live_disabled", "Separate live authorization has not been enabled", 403)
         if not settings.get("legal_reviewed"):
@@ -184,3 +193,5 @@ def initialize(tx):
         set_secret(tx, "DEMO_WEBHOOK_SECRET", secrets.token_urlsafe(48), {"id": "bootstrap", "role": "admin"})
     from . import upgrade
     upgrade.initialize(tx)
+    from . import operations
+    operations.initialize(tx)

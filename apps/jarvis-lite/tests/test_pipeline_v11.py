@@ -256,14 +256,15 @@ def test_scheduler_is_idempotent_and_does_not_retry_unchanged_manual_gates(db):
         assert len(first) == 1
         assert pipeline.schedule_due(tx) == []
     executed = jobs.run_once(db)
-    assert executed["status"] == "completed"
+    assert executed["status"] == "paused"  # A manual gate must be visible as blocked work.
     with db.transaction() as tx:
         tx.now += 7200
         assert pipeline.schedule_due(tx) == []
         company = tx.get("lead", company["id"])
         company["state"] = "COMPLIANCE_CHECK"
         tx.put("lead", company["id"], company)
-        assert len(pipeline.schedule_due(tx)) == 1
+        # Changing a lead cannot silently replace the paused request and its review gate.
+        assert pipeline.schedule_due(tx) == []
 
 
 def test_clearing_kill_cannot_restart_opt_in_scheduler(db):
@@ -303,7 +304,7 @@ def test_explicit_single_lead_request_works_while_scheduler_is_disabled(db):
         job = jobs.enqueue(tx, "pipeline_advance", {"lead_id": company["id"],
             "manual_preparation": True, "pipeline_revision": 0}, idempotency_key="explicit-one-lead", actor=OPERATOR)
     result = jobs.run_once(db)
-    assert result["id"] == job["id"] and result["status"] == "completed"
+    assert result["id"] == job["id"] and result["status"] == "paused"
     assert result["result"]["reason"] == "legal_review_required"
 
 

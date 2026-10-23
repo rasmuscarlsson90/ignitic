@@ -159,7 +159,7 @@ def create_app(database=None, *, worker_enabled=None):
         if database is None:
             db.close()
 
-    app = FastAPI(title="Jarvis Lite · powered by Ignitic", version="1.1.0", lifespan=lifespan,
+    app = FastAPI(title="Jarvis Lite · powered by Ignitic", version="1.2.0", lifespan=lifespan,
                   docs_url=None if production else "/docs")
     app.state.db = db
 
@@ -205,7 +205,7 @@ def create_app(database=None, *, worker_enabled=None):
     def health():
         with db.engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        return {"status": "healthy", "service": "jarvis-lite", "version": "1.1.0"}
+        return {"status": "healthy", "service": "jarvis-lite", "version": "1.2.0"}
 
     @app.post("/api/auth/login")
     def login(body: Login, request: Request):
@@ -284,7 +284,9 @@ def create_app(database=None, *, worker_enabled=None):
     def run_job(request: Request):
         with db.transaction() as tx:
             who(tx, request, True)
-        return {"job": jobs.run_once(db)}
+        result = jobs.run_once(db)
+        return {"job": result, "queue_empty": result is None,
+                "message": "Jobbet har bearbetats" if result else "Jobbkön är tom. Skapa ett internt uppdrag för att börja."}
 
     @app.post("/api/kill-switch")
     def kill(body: Stop, request: Request):
@@ -455,6 +457,8 @@ def create_app(database=None, *, worker_enabled=None):
     def live(body: LiveApproval, request: Request):
         with db.transaction() as tx:
             actor = who(tx, request, True, True)
+            if policy.INTERNAL_ONLY_RELEASE:
+                raise PolicyError("internal_only_release", "External business actions cannot be enabled in v1.2", 403)
             if os.getenv("JARVIS_ALLOW_LIVE", "false").lower() != "true":
                 raise PolicyError("live_disabled", "Live mode is disabled by the deployment; separate authorization is required", 403)
             settings = policy.get_settings(tx)
@@ -471,6 +475,8 @@ def create_app(database=None, *, worker_enabled=None):
 
     from .api_v11 import register_routes
     register_routes(app, db, who)
+    from .api_v12 import register_routes as register_v12
+    register_v12(app, db, who)
 
     @app.post("/api/leads/{lead_id}/{action}")
     def lead_action(lead_id: str, action: Literal["research", "qualify", "compliance", "proposal", "accept", "deliver"], body: Data, request: Request):
@@ -490,6 +496,11 @@ def create_app(database=None, *, worker_enabled=None):
     def job_action(job_id: str, action: Literal["pause", "resume"], body: Reason, request: Request):
         with db.transaction() as tx:
             actor = who(tx, request, True, True)
+            job = tx.get("job", job_id)
+            if action == "resume" and job and job["kind"] == "internal_agent":
+                from . import engine
+                engine.resume_mission(tx, job["payload"]["mission_id"], actor, body.reason)
+                return tx.get("job", job_id)
             return getattr(jobs, action)(tx, job_id, actor=actor, reason=body.reason)
 
     static = Path(__file__).parent / "static"
@@ -498,6 +509,10 @@ def create_app(database=None, *, worker_enabled=None):
 
     @app.get("/")
     def index():
+        return FileResponse(static / "index.html")
+
+    @app.get("/agents")
+    def agent_center():
         return FileResponse(static / "index.html")
 
     return app

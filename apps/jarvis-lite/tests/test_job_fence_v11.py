@@ -66,6 +66,9 @@ def queue_manual_preparation(tx, lead_id):
 
 
 def prepare_live_contact(tx, monkeypatch):
+    # Exercise the retained provider fence beneath the v1.2 release-wide lock.
+    # No runtime setting or product endpoint can lift that lock.
+    monkeypatch.setattr(policy, "INTERNAL_ONLY_RELEASE", False)
     monkeypatch.setenv("JARVIS_ALLOW_LIVE", "true")
     monkeypatch.setenv("JARVIS_ALLOW_LIVE_CONTACT", "true")
     settings = policy.get_settings(tx)
