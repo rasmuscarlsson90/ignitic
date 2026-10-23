@@ -1,8 +1,14 @@
-# Jarvis Lite v1.3 · powered by Ignitic
+# Jarvis Lite v1.4 · powered by Ignitic
 
 An internal business-operator console in one FastAPI application with PostgreSQL,
 a database-backed queue and six logical agent roles. The original Ignitic stack
 and its deployment files remain available independently.
+
+v1.4 adds explicit administrator recovery of a known failed internal AI step in
+the original mission, preserving completed work and costs. It adds role token
+ceilings, renewed activation after configuration changes and Swedish recovery
+history. The supported provider timeout remains 20 seconds; 120 is not enabled.
+Read the [v1.4 recovery and upgrade guide](../../docs/jarvis-lite-v1.4.md).
 
 v1.3 adds bounded structured-response normalization/correction, durable mission
 controls, separate routable work areas with dark/light themes, internal QA,
@@ -17,7 +23,7 @@ customer installations, subscriptions or trading actions are enabled by setup.**
 Version 1.2 adds persistent internal missions for six bounded agent roles,
 source-attributed research/CRM, unsent offers, five versioned service outputs,
 explicit AI activation/diagnostics and internal schedules that default off.
-**Real customer contact and payment requests remain blocked by the server in v1.3,
+**Real customer contact and payment requests remain blocked by the server in v1.4,
 including when old LIVE flags or approvals exist.** Paid AI requires its own
 server capability, administrator approval, compatibility and budget checks.
 An existing Render installation keeps its PostgreSQL data, encrypted
