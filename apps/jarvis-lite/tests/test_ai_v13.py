@@ -314,8 +314,10 @@ def test_legacy_cached_invalid_result_cannot_be_repaired_without_original_eviden
 def test_schema_and_system_tokens_are_included_in_price_bound_before_http(db):
     adapter, calls = transport([response(envelope())])
     with db.transaction() as tx:
-        ai.configure(tx, {"reservation_usd_minor": 1, "prompt_usd_per_million": "3",
+        state = ai.configure(tx, {"reservation_usd_minor": 1, "prompt_usd_per_million": "3",
             "completion_usd_per_million": "0.1", "max_output_tokens": 1, "reason": REASON}, ADMIN)
+        ai.activate(tx, {"statement": ai.ACTIVATE, "config_revision": state["config"]["revision"],
+                         "reason": REASON}, ADMIN)
         with pytest.raises(PolicyError) as error:
             run(tx, adapter)
         assert error.value.code == "ai_reserve_insufficient"

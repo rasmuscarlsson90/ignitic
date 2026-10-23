@@ -135,6 +135,10 @@ def test_per_call_and_global_budget_caps_block_before_provider(db, monkeypatch):
             run(tx, never)
         assert not tx.list("budget_entry")
         enable(tx, monkeypatch, per_call_limit_sek_minor=200)
+        # Changing a reviewed spending bound requires separate renewed approval.
+        state = ai.status(tx)
+        ai.activate(tx, {"statement": ai.ACTIVATE, "config_revision": state["config"]["revision"],
+                         "reason": "Renewed synthetic approval after cost-limit change"}, ADMIN)
         settings = policy.get_settings(tx)
         tx.put("settings", "global", {**settings, "rolling_tools_limit_minor": 0})
         with pytest.raises(PolicyError, match="budget ceiling"):
