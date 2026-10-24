@@ -16,7 +16,7 @@ Branch: `feat/jarvis-lite-v1.5-autonomous-research`. Based on the existing user 
 ## Verified at this checkpoint
 
 - Full suite with local PostgreSQL: **811 passed**, one upstream Starlette/httpx warning, before the last two Sales cases were added.
-- Latest focused suite: **14 passed**, including those two Sales cases. It covers a complete mocked search/fetch/extract/evidence loop, replay without another search charge, source acceptance without manual URLs, stale/spoofed/fabricated claims, unknown-charge retention, policy hard bounds, old pending liabilities and HTTP admin/CSRF checks.
+- Latest focused suite: **16 passed**, including those two Sales cases, the worker-chain regression and an eight-connection PostgreSQL search-budget race. It covers a complete mocked search/fetch/extract/evidence loop, replay without another search charge, source acceptance without manual URLs, stale/spoofed/fabricated claims, unknown-charge retention, policy hard bounds, old pending liabilities and HTTP admin/CSRF checks.
 - Existing search-provider and public-retrieval tests are included in the full run. Existing v1.4 tests remain intact.
 - Ruff, mypy (30 modules), JavaScript syntax, actionlint for both workflows and whitespace checks passed.
 - Chromium on a real isolated server: authentication, v1.5 hydration, disabled Swedish policy screen, expanded admin form and no JavaScript errors passed. Browser used only loopback requests; its server was stopped. This is a smoke test, not full positive autonomous-mission browser acceptance.
@@ -24,8 +24,8 @@ Branch: `feat/jarvis-lite-v1.5-autonomous-research`. Based on the existing user 
 
 ## Remaining before declaring v1.5 complete
 
-1. **Next concrete step:** add one full HTTP/worker end-to-end regression using mocked Brave/page retrieval and the actual AI HTTP adapter with MockTransport. Run CEO → research continuations → Sales → Delivery → Finance → Compliance → CEO summary; assert exact shared pack/usage, retained identities, separate search/AI costs and zero fabricated leads/revenue. The isolated research-loop test already passes, but the complete new graph has not yet been verified in a single test.
-2. Add dedicated PostgreSQL autonomous-search races, calendar-month rollover, stopped/in-flight work/restart and current-policy revocation tests. Existing general PostgreSQL locking/recovery tests pass; they are not a substitute for every new research scenario.
+1. **Next concrete step:** extend the passing full worker-chain regression to HTTP and the actual AI HTTP adapter with MockTransport. Run CEO → research continuations → Sales → Delivery → Finance → Compliance → CEO summary; assert exact shared pack/usage, retained identities, separate search/AI costs and zero fabricated leads/revenue. The whole worker graph now passes in a single test with mocked AI results, search and page retrieval. The actual AI HTTP adapter and HTTP mission route still need to be exercised together.
+2. Extend the passing eight-connection PostgreSQL search-budget race with calendar-month rollover, stopped/in-flight work/restart and current-policy revocation tests. Existing general PostgreSQL locking/recovery tests pass; they are not a substitute for every new research scenario.
 3. Complete positive mission/provenance/activation and viewer/mobile browser acceptance, including gaps and rejected sources. Current browser smoke does not cover all these cases.
 4. Review the new policy/evidence/worker integration independently, particularly downstream factual-vs-hypothesis handling and publisher independence. Mechanical literal matching cannot prove factual truth or copyright/terms compliance.
 5. Review final dependency audit and production Docker CI. Do not activate production research until the remaining tests and review pass.
@@ -45,3 +45,5 @@ Required for future authorized real research:
 The official public Brave SDK established the request contract. Direct official pricing/terms pages returned HTTP 403 from this workspace; no current tariff or legal permission is claimed verified. The operator must verify and attest those inputs independently. No price/free-credit assumption is bundled.
 
 Preserve the existing Render service, PostgreSQL URL, session/encryption keys and users. Back up and restore to an isolated database before a separately approved manual upgrade. Do not reapply a Blueprint or run `init-demo` against production. Keep contact/payment capabilities disabled. For rollback, stop workers, return to the recorded earlier image and preserve the database/history; do not blindly resume v1.5 continuation jobs under older code.
+
+CI for checkpoint `0fdfe674` passed: https://github.com/rasmuscarlsson90/ignitic/actions/runs/40078346380 (tests, audit, Docker build/non-root PostgreSQL startup). Later test-only additions are submitted to a new CI run.

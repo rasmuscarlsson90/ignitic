@@ -190,3 +190,65 @@ def test_sales_cannot_substitute_unproven_market_demand(db, monkeypatch, support
         if not supported:
             assert result['issues'] == ['unsupported_or_unbounded_opportunity']
             assert result['opportunities'] == []
+
+
+def test_worker_chain_continues_original_research_task_to_ceo_summary(db, monkeypatch):
+    from jarvis_lite import engine, jobs, search_provider, web_retrieval
+    from jarvis_lite.store import fingerprint
+    with db.transaction() as tx:
+        setup(tx, monkeypatch)
+        # setup's bare mission has no jobs; retain it as separate history.
+        mission = engine.create_mission(tx, {'goal': 'Analysera svenska småföretag AI kundservice med källor och ekonomiska osäkerheter',
+            'research_mode': 'autonomous', 'deliverable_kind': 'business_plan', 'max_cost_minor': 2000}, ADMIN, 'whole-chain')
+    monkeypatch.setattr(search_provider, 'BraveSearchAdapter', lambda **kwargs: Search())
+    monkeypatch.setattr(web_retrieval, 'PublicWebAdapter', Pages)
+    roles = []
+    def execute(tx, **kwargs):
+        role = kwargs['role']; roles.append(role)
+        contract = kwargs.get('response_contract') or getattr(tx, 'ai_response_contract', None) or tx.agent_context.get('response_contract')
+        prompt = json.loads(kwargs['text'])
+        if contract in {'web_research_plan', 'web_research_claims'}:
+            result = model(tx, **kwargs)
+            content = json.loads(result['output']['text'])
+        elif contract == 'ceo_plan_research':
+            content = {'tasks': [{'role': r, 'objective': 'Bearbeta godkänt internt underlag för ' + r} for r in engine.SPECIALISTS],
+                       'information_needs': ['Vilka belägg finns för småföretags AI-användning?']}
+        elif role == 'lead_research':
+            content = {'summary': TEXT, 'candidates': [], 'findings': [], 'uncertainties': ['Syntetiskt underlag kräver mänsklig granskning']}
+        elif role == 'sales':
+            claim = prompt['verified_knowledge']['claims'][0]
+            content = {'summary': 'Intern hypotes, inget efterfrågebevis', 'opportunities': [{
+                'title': 'Hypotes om intern AI-assistans', 'target_group': 'Målgrupp att validera', 'problem': claim['text'],
+                'solution': 'Internt granskade utkast', 'price_estimate_minor': 500000, 'cost_estimate_minor': 100000,
+                'competition': 'Ej verifierad', 'risks': ['Efterfrågan måste valideras'],
+                'source_ids': [c['source_id'] for c in claim['citations']], 'next_steps': ['Validera hypotes internt'],
+                'assumptions': ['Priser och kostnader är obekräftade'], 'classification': 'HYPOTHESIS',
+                'claim_ids': [claim['id']], 'factual_claims': [{'claim_id': claim['id'], 'text': claim['text']}]}]}
+        elif role == 'delivery':
+            claim = prompt['verified_knowledge']['claims'][0]
+            content = {'title': 'Intern affärsplan med osäkerheter', 'sections': [{'key': key, 'heading': key,
+                'content': 'Hypotes för intern validering. Verkliga kundbehov, kostnader och efterfrågan har inte verifierats.',
+                'source_ids': [prompt['source_evidence'][0]['id']]} for key in prompt['required_section_keys']],
+                'next_actions': ['Granska affärsantaganden internt'], 'limitations': ['Syntetiska belägg och okända arbetskostnader kräver validering'],
+                'company_ids': [], 'classification': 'HYPOTHESIS', 'factual_claims': [{'claim_id': claim['id'], 'text': claim['text']}]}
+        elif role == 'compliance':
+            content = {'verdict': 'pass', 'findings': [], 'summary': 'Intern kvalitet kontrollerad, inga externa behörigheter ges',
+                       'source_ids': prompt.get('source_ids', prompt.get('facts', {}).get('source_ids', []))}
+        else:
+            content = 'Intern sammanställning: priser är hypoteser, verkliga kostnader saknas och inga intäkter eller kundkontakter är verifierade.'
+        return tx.create('agent_result', {'provider': 'openrouter', 'simulated': False, 'status': 'COMPLETED',
+            'output': {'action': 'recommend', 'text': json.dumps(content) if not isinstance(content, str) else content, 'reason': REASON},
+            'trace_id': 'mock-' + fingerprint(kwargs['idempotency_key']), 'role': role})
+    monkeypatch.setattr(ai, 'task', execute)
+    for _ in range(24):
+        result = jobs.run_once(db)
+        assert result is not None
+        assert result['status'] == 'completed', result
+        with db.transaction() as tx:
+            saved = tx.get('business_mission', mission['id'])
+            if saved['status'] == 'REVIEW_REQUIRED':break
+    with db.transaction() as tx:
+        tasks = [task for task in tx.list('agent_task') if task['mission_id'] == mission['id']]
+        assert len(tasks) == 7 and all(task['status'] == 'COMPLETED' for task in tasks)
+        assert set(roles) == set(engine.ROLE_TOOLS)
+        assert saved['evidence_pack_id'] and tx.list('mission_summary')
