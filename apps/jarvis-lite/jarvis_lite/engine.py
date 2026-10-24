@@ -269,7 +269,7 @@ def _new_task(tx, mission, role, step, objective, dependencies):
 def create_mission(tx, payload, actor, key, *, schedule_context=None):
     if not isinstance(actor, dict) or actor.get("role") not in {"admin", "operator"}:
         raise PolicyError("operator_required", "An operator must request an internal mission", 403)
-    fields = {"goal", "source_ids", "lead_ids", "deliverable_kind", "max_cost_minor", "priority", "refresh_sources", *MISSION_LIMITS}
+    fields = {"goal", "source_ids", "lead_ids", "deliverable_kind", "max_cost_minor", "priority", "refresh_sources", "research_mode", *MISSION_LIMITS}
     if not isinstance(payload, dict) or set(payload) - fields:
         raise PolicyError("mission_invalid", "Only supported internal mission fields are accepted", 422)
     goal = payload.get("goal")
@@ -280,6 +280,10 @@ def create_mission(tx, payload, actor, key, *, schedule_context=None):
              "deliverable_kind": payload.get("deliverable_kind", "market_analysis"),
              "max_cost_minor": payload.get("max_cost_minor", 2000),
              "priority": payload.get("priority", 50), "refresh_sources": payload.get("refresh_sources", False)}
+    if "research_mode" in payload:
+        if not isinstance(payload["research_mode"], str) or payload["research_mode"] not in {"manual", "autonomous"}:
+            raise PolicyError("mission_research_mode", "Välj manuellt godkända källor eller policygodkänd autonom research", 422)
+        value["research_mode"] = payload["research_mode"]
     if (not isinstance(value["deliverable_kind"], str) or value["deliverable_kind"] not in DELIVERABLES or not _integer(value["max_cost_minor"], 1, 50000)
             or not _integer(value["priority"], 0, 100) or type(value["refresh_sources"]) is not bool):
         raise PolicyError("mission_invalid", "Choose an approved deliverable and bounded internal mission budget", 422)
@@ -305,6 +309,13 @@ def create_mission(tx, payload, actor, key, *, schedule_context=None):
     if previous:
         return tx.get("business_mission", previous["mission_id"])
     policy.guard(tx, "job", actor=actor)
+    for source_id in value["source_ids"]:
+        selected = tx.get("research_source", source_id) or {}
+        if selected.get("approval_mode") == "AUTONOMOUS_POLICY":
+            raise PolicyError("autonomy_source_scope", "Automatiskt källgodkännande gäller ursprungsuppdraget; välj ett nytt autonomt uppdrag eller granska källan manuellt.", 403)
+    if value.get("research_mode") == "autonomous":
+        from . import autonomous_research
+        autonomous_research.require_ready(tx)
     _allowed(tx, "ceo", "delegate")
     limits = budget.summary(tx)
     if value["max_cost_minor"] > min(limits["remaining_minor"]["total"], limits["remaining_minor"]["tools_30d"]):
@@ -330,7 +341,9 @@ def _real_ai(tx, mission, task, prompt):
                 "reason": "The actual evidence exceeds the reviewed model input limit; narrow the mission or review model bounds"}
     previous_context = getattr(tx, "agent_context", None)
     if _v13(mission) or task["step"] == "plan":
-        contract = "ceo_plan" if task["step"] == "plan" else "ceo_summary" if task["role"] == "ceo" else "compliance_qa" if task["role"] == "compliance" else "finance_analysis" if task["role"] == "finance" else "analysis"
+        contract = ("ceo_plan_research" if task["step"] == "plan" and mission.get("research_mode") == "autonomous"
+                    else "ceo_plan" if task["step"] == "plan" else "ceo_summary" if task["role"] == "ceo"
+                    else "compliance_qa" if task["role"] == "compliance" else "finance_analysis" if task["role"] == "finance" else "analysis")
         tx.agent_context = {**(previous_context or {}), "response_contract": contract}
     try:
         result = ai.task(tx, role=task["role"], text=prompt,
@@ -357,8 +370,10 @@ def _real_ai(tx, mission, task, prompt):
 
 def _plan(tx, mission, task):
     _allowed(tx, "ceo", "plan")
+    autonomous = mission.get("research_mode") == "autonomous"
     result = _real_ai(tx, mission, task, json.dumps({"goal": mission["goal"],
-        "task": "Return outer action=recommend and text containing JSON {tasks:[{role,objective}]}. Include exactly these five distinct specialist roles. Objectives are internal preparation only; no contact, purchases, deployment, payment or invented evidence.",
+        "task": "Return outer action=recommend and text containing JSON {tasks:[{role,objective}]}. Include exactly these five distinct specialist roles. Objectives are internal preparation only; no contact, purchases, deployment, payment or invented evidence." + (
+            " Also include information_needs: one to six specific evidence questions to guide autonomous public-source research. Define needed facts, not presumed demand or permission." if autonomous else ""),
         "roles": list(SPECIALISTS), "source_ids": mission["source_ids"],
         "deliverable_kind": mission["deliverable_kind"], "mission_budget_sek_minor": mission["max_cost_minor"]}))
     if result.get("status") != "COMPLETED":
@@ -366,12 +381,15 @@ def _plan(tx, mission, task):
     try:
         plan = json.loads(result["output"]["text"])
         tasks = plan["tasks"]
-        if (not isinstance(plan, dict) or set(plan) != {"tasks"} or not isinstance(tasks, list)
+        if (not isinstance(plan, dict) or set(plan) != ({"tasks", "information_needs"} if autonomous else {"tasks"}) or not isinstance(tasks, list)
                 or len(tasks) != len(SPECIALISTS)
                 or any(not isinstance(item, dict) or set(item) != {"role", "objective"}
                        or item["role"] not in SPECIALISTS or not isinstance(item["objective"], str)
                        or not 8 <= len(item["objective"]) <= 500 for item in tasks)
                 or {item["role"] for item in tasks} != set(SPECIALISTS)):
+            raise ValueError
+        if autonomous and (not isinstance(plan["information_needs"], list) or not 1 <= len(plan["information_needs"]) <= 6
+                or any(not isinstance(need, str) or not 1 <= len(need) <= 500 for need in plan["information_needs"])):
             raise ValueError
     except (ValueError, TypeError, KeyError, AttributeError):
         return {"status": "REVIEW_REQUIRED", "code": "agent_plan_invalid", "ai_result": result,
@@ -381,6 +399,10 @@ def _plan(tx, mission, task):
         "tasks": tasks, "ai_result_id": result["id"], "trace_id": result.get("trace_id"),
         "status": "INTERNAL_ONLY", "data_mode": "REAL"})
     mission["plan_id"] = saved["id"]
+    if autonomous:
+        mission["information_needs"] = plan["information_needs"]
+        saved["information_needs"] = plan["information_needs"]
+        tx.put("business_plan", saved["id"], saved)
     ids = {role: _task_id(mission["id"], role) for role in SPECIALISTS}
     if _v13(mission):
         deps = {"lead_research": [task["id"]], "sales": [ids["lead_research"]],
@@ -431,7 +453,10 @@ def _output_reference(output):
 
 
 def _facts(tx, mission):
+    from . import intelligence
+    knowledge = intelligence.mission_evidence(tx, mission) if mission.get("research_mode") == "autonomous" else {}
     return {"mission_id": mission["id"], "goal": mission["goal"], "source_ids": mission["source_ids"],
+            **({"verified_knowledge": knowledge} if knowledge else {}),
             "lead_ids": mission["lead_ids"], "actual_and_pending_cost_minor": _mission_cost(tx, mission["id"]),
             "tasks": [{"role": item["role"], "step": item["step"], "status": item["status"],
                        "output": _output_reference(item.get("output"))} for item in tx.list("agent_task")
@@ -447,6 +472,17 @@ def _handler(tx, mission, task):
     if role == "lead_research":
         _allowed(tx, role, "approved_research")
         from . import intelligence
+        if mission.get("research_mode") == "autonomous":
+            from . import autonomous_research
+            if not mission.get("evidence_pack_id"):
+                progress = autonomous_research.advance(tx, mission, actor, key)
+                if progress.get("status") == "EVIDENCE_READY":
+                    mission.update(evidence_pack_id=progress["evidence_pack_id"], source_ids=progress["source_ids"],
+                                   refresh_sources=False)
+                    return {**progress, "status": "RESEARCH_CONTINUE", "reason": "Verifierat kunskapsunderlag sparat. Nästa jobb sammanställer researchrapporten."}
+                return progress
+            autonomous_research.guard_current_pack(tx, mission)
+            intelligence.mission_evidence(tx, mission)
         # A recovery is an AI-only request using retained approved evidence.
         # Preflight requires current data for every source, so this cannot
         # trigger a source refresh with a new network/request identity.
@@ -462,7 +498,7 @@ def _handler(tx, mission, task):
     if role == "sales":
         _allowed(tx, role, "sales_draft")
         from . import intelligence
-        if not mission["lead_ids"]:
+        if not mission["lead_ids"] or mission.get("research_mode") == "autonomous":
             if _v13(mission):
                 strategy = intelligence.prepare_strategy(tx, mission, actor, key)
                 if strategy.get("status") == "COMPLETED":
@@ -598,6 +634,15 @@ def _quality_snapshot(tx, mission):
                 "evidence_fingerprint", "quality", "simulated", "external_action", "ai_result_id", "trace_id", "version")}),
             "order": fingerprint({name: order.get(name) for name in ("kind", "brief", "evidence", "financial_snapshot", "companies", "input_fingerprint")})})
     allowed = policy.get_settings(tx).get("approved_sources", [])
+    if mission.get("research_mode") == "autonomous":
+        from . import research
+        allowed = []
+        for sid in source_ids:
+            try:
+                research._approved(tx, sid)
+                allowed.append(sid)
+            except PolicyError:
+                pass
     return {"results": sorted(snapshots, key=lambda item: item["order_id"]),
             "sources": [{"id": source_id, "approved": source_id in allowed, "state": fingerprint(tx.get("research_source", source_id))}
                         for source_id in sorted(source_ids)]}
@@ -700,6 +745,28 @@ def execute_agent(tx, job):
     # enqueueing delegation from the stale pre-checkpoint objects.
     policy.guard(tx, "job", actor={"id": "agent:" + task["role"], "role": "operator"})
     status = result.get("status", "REVIEW_REQUIRED")
+    if status == "RESEARCH_CONTINUE":
+        count = task.get("research_continuations", 0) + 1
+        if count > 40:
+            result = {"status": "REVIEW_REQUIRED", "code": "research_operation_limit", "reason": "Researchens fasta fortsättningsgräns är nådd."}
+            status = result["status"]
+        else:
+            if task.get("retry_id"):
+                record = tx.get("mission_retry", task["retry_id"])
+                if record:
+                    tx.put("mission_retry", record["id"], {**record, "status": "COMPLETED", "finished_at": tx.now})
+                task.pop("retry_id", None)
+            task.update(status="QUEUED", research_continuations=count, output=result,
+                        request_key="autonomy-step:" + fingerprint({"task": task["id"], "continuation": count}), job_id=None)
+            _save(tx, "business_mission", mission)
+            _enqueue(tx, mission, task)
+            if isinstance(result.get("next_at"), (int, float)) and math.isfinite(result["next_at"]):
+                following = tx.get("job", task["job_id"])
+                following["run_at"] = max(tx.now, result["next_at"])
+                tx.put("job", following["id"], following)
+            tx.audit(actor={"id": "agent:lead_research"}, action="research.continued",
+                     details={"mission_id": mission["id"], "task_id": task["id"], "continuation": count})
+            return {"status": "CONTINUED", "mission_id": mission["id"], "task_id": task["id"], "progress": result}
     if status in {"UNKNOWN", "UNCERTAIN"}:
         task["status"] = mission["status"] = "REVIEW_REQUIRED" if _v13(mission) else "UNCERTAIN"
         mission["uncertain_outcome"] = True

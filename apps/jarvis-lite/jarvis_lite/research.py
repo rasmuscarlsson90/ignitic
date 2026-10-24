@@ -134,6 +134,11 @@ def sources(tx):
 
 def _approved(tx, source_id):
     source = tx.get("research_source", source_id)
+    if source and source.get("approval_mode") == "AUTONOMOUS_POLICY":
+        from . import autonomous_research
+        context = getattr(tx, "agent_context", None) or {}
+        autonomous_research.source_allowed(tx, source, context.get("mission_id"))
+        return source
     if not source or not source.get("approved") or not source.get("license_reviewed"):
         raise PolicyError("research_source_unapproved", "An explicitly approved and licensed source is required", 403)
     if source_id not in policy.get_settings(tx).get("approved_sources", []):
@@ -329,7 +334,11 @@ def documents(tx, source_ids=None, current_only=True):
         if source_ids is not None and original.get("source_id") not in source_ids:
             continue
         source = tx.get("research_source", original.get("source_id", ""), {})
-        current = bool(source.get("approved") and source.get("license_reviewed") and source.get("id") in allowed
+        try:
+            permitted = bool(_approved(tx, source.get("id")))
+        except PolicyError:
+            permitted = False
+        current = bool(permitted
             and source.get("version") == original.get("source_version")
             and source.get("data_mode", "REAL") == original.get("record_mode"))
         if current_only and not current:
