@@ -1,0 +1,98 @@
+name: Jarvis Lite
+
+on:
+  pull_request:
+    paths:
+      - 'apps/jarvis-lite/**'
+      - 'render-lite.yaml'
+      - 'docker-compose.lite.yml'
+      - 'docs/jarvis-lite-*.md'
+      - '.github/workflows/jarvis-lite.yml'
+  push:
+    branches: [main, 'feat/jarvis-lite-*']
+    paths:
+      - 'apps/jarvis-lite/**'
+      - 'render-lite.yaml'
+      - 'docker-compose.lite.yml'
+      - 'docs/jarvis-lite-*.md'
+      - '.github/workflows/jarvis-lite.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jarvis-lite-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/jarvis-lite
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: jarvis
+          POSTGRES_PASSWORD: ci-test-only
+          POSTGRES_DB: jarvis_test
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U jarvis -d jarvis_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.12.23'
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: apps/jarvis-lite/uv.lock
+      - run: uv sync --frozen --all-extras
+      - name: Unit and PostgreSQL integration tests; no live providers
+        env:
+          JARVIS_TEST_DATABASE_URL: postgresql+psycopg://jarvis:ci-test-only@localhost:5432/jarvis_test
+        # conftest.py blocks external sockets/DNS; provider calls use mocks.
+        run: uv run --frozen pytest -q
+      - run: uv run --frozen ruff check jarvis_lite tests
+      - run: uv run --frozen mypy jarvis_lite
+      - name: Audit frozen runtime dependencies
+        run: |
+          uv export --frozen --no-dev --no-emit-project --format requirements-txt --output-file /tmp/jarvis-lite-requirements.txt
+          uv run --frozen pip-audit --cache-dir .cache/pip-audit --require-hashes --requirement /tmp/jarvis-lite-requirements.txt
+      - name: Build production image
+        working-directory: .
+        run: docker build --tag jarvis-lite:ci apps/jarvis-lite
+      - name: Start non-root production image with isolated PostgreSQL
+        env:
+          JARVIS_TEST_DATABASE_URL: postgresql+psycopg://jarvis:ci-test-only@localhost:5432/jarvis_test
+        run: |
+          uv run python -m jarvis_lite.cli init-demo
+          docker run --detach --name jarvis-lite-ci --network host --env-file .env \
+            --env JARVIS_ENV=production --env JARVIS_ALLOW_LIVE=false \
+            --env JARVIS_DATABASE_URL="$JARVIS_TEST_DATABASE_URL" \
+            --env JARVIS_WORKER_ENABLED=false --env PORT=8090 jarvis-lite:ci
+          uv run python - <<'PY'
+          import json, time
+          from urllib.request import ProxyHandler, build_opener
+          client = build_opener(ProxyHandler({}))
+          for attempt in range(30):
+              try:
+                  with client.open('http://127.0.0.1:8090/health', timeout=2) as response:
+                      body = json.load(response)
+                      assert body['status'] == 'healthy' and body['service'] == 'jarvis-lite'
+                      assert response.headers['Strict-Transport-Security'].startswith('max-age=')
+                      break
+              except OSError:
+                  if attempt == 29:
+                      raise
+                  time.sleep(1)
+          PY
+          test "$(docker exec jarvis-lite-ci id -u)" = 10001
+          docker exec jarvis-lite-ci python -c "from pathlib import Path; assert not Path('/app/.env').exists(); assert not Path('/app/.local/admin-password').exists()"
+      - name: Stop CI image
+        if: always()
+        run: docker rm --force jarvis-lite-ci >/dev/null 2>&1 || true

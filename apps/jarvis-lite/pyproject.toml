@@ -1,0 +1,42 @@
+[project]
+name = "jarvis-lite"
+version = "1.5.0"
+description = "Ignitic-powered internal business operator with deterministic safety controls"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "fastapi>=0.121,<1",
+  "uvicorn>=0.38,<1",
+  "sqlalchemy>=2.0.41,<2.1",
+  "psycopg[binary]>=3.2.6,<4",
+  "cryptography>=50,<51",
+  "httpx>=0.28.1,<0.29",
+  "python-dotenv>=1.1,<2",
+  "pydantic>=2.12,<3",
+  "tzdata>=2025.2",
+  "pypdf>=6,<7",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10", "ruff>=0.14,<1", "mypy>=1.18,<2", "pip-audit>=2.9,<3", "pyyaml>=6.0.2,<7"]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["jarvis_lite*"]
+
+[tool.setuptools.package-data]
+jarvis_lite = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+ignore_missing_imports = true
