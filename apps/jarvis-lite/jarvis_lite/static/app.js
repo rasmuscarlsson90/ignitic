@@ -21,7 +21,8 @@
     CONFIRMED: "Betalning bekräftad", SENT: "Skickad", DELIVERED: "Levererad", PENDING: "Väntar", DONE: "Klar",
     RESOLVED: "Granskad", SUPERSEDED: "Sammanförd", BLOCKED: "Spärrad", REVIEW_REQUIRED: "Kräver granskning",
     IDLE: "Ledig", WORKING: "Arbetar", ERROR: "Fel / granskas", BUSY: "Arbetar", WAITING: "Väntar", READY: "Redo", UNDISPATCHED: "Ej skickat", TEST_ARTIFACT: "Äldre testartefakt",
-    APPROVED_INTERNAL: "Internt granskad · oskickad", NEEDS_REVIEW: "Behöver granskas", QUALITY_REVIEW: "Kvalitetsgranskning"
+    APPROVED_INTERNAL: "Internt granskad · oskickad", NEEDS_REVIEW: "Behöver granskas", QUALITY_REVIEW: "Kvalitetsgranskning",
+    AUTO_APPROVED: "Automatiskt godkänd", ACCEPTED_SOURCE: "Godkänd av webbpolicy", VERIFIED: "Samstämmiga belägg", ATTRIBUTED: "Källbelagd uppgift", UNVERIFIED: "Inte verifierad", HYPOTHESIS: "Hypotes", CONFLICT: "Motstridiga belägg", INSUFFICIENT_EVIDENCE: "Kunskapsluckor", EVIDENCE_GAP: "Belägg saknas"
   };
   const jobNames = { demo_journey: "Simulerad kundresa", research: "Leadanalys", qualify: "Kvalificering", follow_up: "Uppföljning", daily_report: "Daglig rapport", pipeline_advance: "Förbered nästa affärssteg", source_research: "Granska tillåten researchkälla" };
   const errorNames = {
@@ -45,6 +46,10 @@
     kill_switch: "Nödstoppet blockerar nya åtgärder.",
     kill_switch_active: "Nödstoppet blockerar nya åtgärder.",
     budget_exhausted: "Budgettaket är nått. Nya kostnadsdrivande uppgifter är blockerade.",
+    autonomous_research_disabled: "Autonom webbresearch är avstängd. Granska policy, sökbudget och separat godkännande.",
+    autonomous_runtime_disabled: "Servern tillåter inte autonom webbresearch. En sparad policy ändrar inte serverns säkerhetsgräns.",
+    search_budget_exhausted: "Den separata sökbudgeten räcker inte. Inga nya betalda sökningar tillåts.",
+    unsupported_or_unbounded_opportunity: "Affärspåståendet saknar tillräckliga specifika belägg. En officiell källa är inte i sig bevis för efterfrågan eller lönsamhet.",
     payment_approval_required: "En administratör måste först godkänna den här betalningsbegäran.",
     test_recipient_required: "Mottagaren måste finnas i serverns lista över godkända testmottagare.",
     recipient_suppressed: "Kontakten är avregistrerad eller finns på spärrlistan.",
@@ -259,7 +264,7 @@
       ["Senast schemalagt", date(pipeline.last_scheduled_at)]
     ]);
     hydrateConfig("pipeline-config-form", { "pipeline-enabled": Boolean(pipeline.enabled), "pipeline-sources": list(pipeline.source_ids).join(", "), "pipeline-interval": number(first(pipeline.interval_seconds, 3600)) / 60, "pipeline-max-leads": first(pipeline.max_leads_per_tick, 5), "pipeline-followup": number(first(pipeline.follow_up_delay_seconds, 259200)) / 86400 });
-    const sources = list(v.research_sources);
+    const sources = list(v.research_sources).filter((source) => source.approval_mode !== "AUTONOMOUS_POLICY");
     const sourceBox = byId("sources-list");
     sourceBox.replaceChildren();
     text("sources-count", sources.length);
@@ -842,6 +847,11 @@
     disable("ai-activate", !isAdmin() || !state.v12 || isKilled() || !aiStatus().config?.revision);
     disable("ai-deactivate", !isAdmin() || !state.v12 || !aiStatus().config?.revision);
     disable("ai-model-refresh", !isAdmin() || !state.v12 || isKilled());
+    const autonomy = state.v12?.autonomous_research;
+    for (const id of ["autonomy-policy-form", "autonomy-activation-form"]) byId(id).querySelector("fieldset").disabled = !isAdmin() || !autonomy;
+    disable("autonomy-policy-save", !isAdmin() || !autonomy);
+    disable("autonomy-activate", !isAdmin() || !autonomy?.policy?.revision || isKilled());
+    disable("autonomy-deactivate", !isAdmin() || !autonomy?.policy?.revision);
   }
   function render(data) {
     state.data = data;
@@ -856,7 +866,7 @@
     try {
       const data = await api("/api/dashboard");
       if (!data.v12) {
-        try { state.v12 = await api("/api/v1.4/overview"); }
+        try { state.v12 = await api("/api/v1.5/overview"); }
         catch (error) { if (!state.user) throw error; state.v12 = null; }
       }
       if (state.crmQuery) state.crm = await api("/api/crm/leads?" + state.crmQuery);
@@ -972,7 +982,7 @@
   });
   byId("mission-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const result = await mutate(byId("mission-submit"), "/api/missions", { idempotency_key: key("mission"), goal: byId("mission-goal").value.trim(), source_ids: ids(byId("mission-sources").value), lead_ids: ids(byId("mission-leads").value), deliverable_kind: byId("mission-type").value, max_cost_minor: Math.round(Number(byId("mission-cost").value) * 100), priority: byId("mission-priority").value, deadline_seconds: Number(byId("mission-deadline").value) * 60, max_steps: Number(byId("mission-steps").value), max_retries: Number(byId("mission-retries").value), max_revisions: Number(byId("mission-revisions").value) }, "Uppdraget är registrerat. Följ agenternas steg, resultat och kostnader i uppdragsvyn.");
+    const result = await mutate(byId("mission-submit"), "/api/missions", { idempotency_key: key("mission"), goal: byId("mission-goal").value.trim(), source_ids: ids(byId("mission-sources").value), lead_ids: ids(byId("mission-leads").value), research_mode: byId("mission-research-mode").value, deliverable_kind: byId("mission-type").value, max_cost_minor: Math.round(Number(byId("mission-cost").value) * 100), priority: byId("mission-priority").value, deadline_seconds: Number(byId("mission-deadline").value) * 60, max_steps: Number(byId("mission-steps").value), max_retries: Number(byId("mission-retries").value), max_revisions: Number(byId("mission-revisions").value) }, "Uppdraget är registrerat. Följ agenternas steg, resultat och kostnader i uppdragsvyn.");
     if (result?.id) navigate("/missions/" + encodeURIComponent(result.id));
     text("mission-feedback", result ? "Registrerat uppdrag: " + first(result.id, result.mission?.id, "se Agent Control Center") + " · " + statusLabel(asStatus(result.mission || result)) : "Uppdraget kunde inte skapas. Se serverns blockeringsorsak ovan. Ingen pågående aktivitet antas.");
   });
@@ -1004,7 +1014,7 @@
     overview: { title: "Översikt", base: "/", tabs: [] },
     agents: { title: "AI-agenter", base: "/agents", tabs: [["overview", "Översikt"], ["workflows", "Arbetsflöden"], ["activity", "Aktivitet"], ["history", "Historik"]] },
     missions: { title: "Uppdrag", base: "/missions", tabs: [["active", "Aktiva"], ["waiting", "Väntande"], ["completed", "Slutförda"], ["archive", "Arkiv"]] },
-    research: { title: "Research & Leads", base: "/research", tabs: [["leads", "Leads"], ["sources", "Källor"], ["reports", "Analyser"]] },
+    research: { title: "Research & Leads", base: "/research", tabs: [["leads", "Leads"], ["autonomy", "Autonom research"], ["sources", "Manuella källor"], ["reports", "Analyser"]] },
     deliverables: { title: "Leverabler", base: "/deliverables", tabs: [["library", "Bibliotek"], ["new", "Ny beställning"]] },
     finance: { title: "Ekonomi", base: "/finance", tabs: [["overview", "Översikt"], ["costs", "Kostnader"], ["budget", "Budget"]] },
     settings: { title: "Inställningar", base: "/settings", tabs: [["ai", "AI & modeller"], ["integrations", "API & integrationer"], ["budget", "Bokföring"], ["security", "Säkerhet"], ["schedules", "Schemaläggning"], ["logs", "Systemloggar"]] }
@@ -1222,6 +1232,7 @@
     const stats = el("div", "detail-stats"); stats.append(statCard("Steg", done + " / " + tasks.length, "Slutförda / registrerade"), statCard("Kostnad & reservation", mission.actual_and_pending_cost_minor, "Uppdragets aktuella belastning", true), statCard("Kostnadstak", mission.max_cost_minor, "Överordnade mandat gäller", true), statCard("Tidsgräns", date(mission.deadline_at), "Skapad " + date(mission.created_at))); target.append(stats);
     if (mission.blocker || mission.uncertain_outcome) target.append(el("div", "notice notice-error", first(mission.blocker?.message, mission.blocker?.code, "Leverantörsutfallet är okänt. Manuell avstämning krävs innan fortsatt arbete.")));
     const recovery = missionRecovery(mission, detail); if (recovery) target.append(recovery);
+    const webResearch = missionWebResearch(mission, detail); if (webResearch) target.append(webResearch);
     const timeline = el("article", "panel"); timeline.append(el("h2", "", "Uppdragets steg & tidslinje"));
     for (const task of tasks) { const row = el("div", "timeline-row"); const marker = el("span", "timeline-marker", asStatus(task) === "COMPLETED" ? "✓" : "·"); const body = el("div", "timeline-copy"); const header = el("div", "task-heading"); header.append(el("strong", "", (agentNames[task.role] || task.role) + " · " + first(task.objective, task.step, "Internt delsteg")), badge(asStatus(task))); body.append(header, el("p", "row-meta", "Start " + date(first(task.started_at, task.created_at)) + " · klar " + date(task.finished_at))); if (task.error_code || task.error_message) body.append(el("p", "blocker-note", first(errorNames[task.error_code], task.error_message, task.error_code))); const usage = missionTaskUsage(task, detail?.ai_traces); if (usage) body.append(usage); if (task.output) body.append(resultDetails("Visa registrerat resultat", taskOutput(task))); row.append(marker, body); timeline.append(row); }
     if (!tasks.length) timeline.append(el("p", "empty-state", "Ingen deluppgift har registrerats.")); target.append(timeline);
@@ -1292,9 +1303,123 @@
   byId("document-import-form").addEventListener("submit", async (event) => { event.preventDefault(); const document = { title: byId("document-title").value.trim(), content: byId("document-content").value.trim() }; if (byId("document-url").value.trim()) document.source_url = byId("document-url").value.trim(); const result = await mutate(byId("document-import-submit"), "/api/research/sources/" + encodeURIComponent(byId("document-source").value.trim()) + "/documents", { documents: [document], idempotency_key: key("document") }, "Dokumentunderlaget är sparat med källhänvisning. Ingen extern källa har hämtats."); if (result) { byId("document-content").value = ""; delete event.target.dataset.dirty; } });
   byId("ai-limits-form").addEventListener("submit", async (event) => { event.preventDefault(); await saveConfig("ai-limits-form", "ai-limit-submit", "/api/budget/ai-limits", { daily_limit_minor: Math.round(Number(byId("ai-limit-day").value) * 100), monthly_limit_minor: Math.round(Number(byId("ai-limit-month").value) * 100), reason: byId("ai-limit-reason").value.trim() }, "De granskade AI-tidsgränserna är sparade."); });
 
+  function autonomousState() { return state.v12?.autonomous_research || {}; }
+  function sourceState(source) {
+    const status = String(first(source.status, source.evaluation?.status, "PENDING")).toUpperCase();
+    return ["ACCEPTED", "AUTO_APPROVED", "APPROVED"].includes(status) ? "approved" : ["REJECTED", "BLOCKED", "FAILED"].includes(status) ? "rejected" : "pending";
+  }
+  function publicSourceLink(label, value) {
+    try { const url = new URL(value); if (url.protocol !== "https:" || url.username || url.password) throw new Error(); const link = el("a", "source-reference", label || url.href); link.href = url.href; link.target = "_blank"; link.rel = "noopener noreferrer nofollow"; return link; }
+    catch { return el("span", "muted small", "Ingen giltig offentlig HTTPS-referens registrerad."); }
+  }
+  function researchReasons(values) {
+    return list(values).map((item) => typeof item === "string" ? first(errorNames[item], item.replaceAll("_", " ")) : first(item.message, item.rationale, errorNames[item.code], item.code, "Granskning krävs"));
+  }
+  function stockholmInput(timestamp) {
+    if (!timestamp) return "";
+    const parts = Object.fromEntries(new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Stockholm", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(timestamp * 1000)).map((item) => [item.type, item.value]));
+    return parts.year + "-" + parts.month + "-" + parts.day + "T" + parts.hour + ":" + parts.minute;
+  }
+  function parseStockholmInput(value) {
+    const values = String(value).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/); if (!values) return NaN;
+    const wall = Date.UTC(Number(values[1]), Number(values[2]) - 1, Number(values[3]), Number(values[4]), Number(values[5])); let instant = wall;
+    for (let i = 0; i < 3; i++) { const local = stockholmInput(instant / 1000).match(/\d+/g).map(Number); const observed = Date.UTC(local[0], local[1] - 1, local[2], local[3], local[4]); instant += wall - observed; }
+    return stockholmInput(instant / 1000) === value ? instant / 1000 : NaN;
+  }
+  function renderAutonomyPolicy(data) {
+    const policy = data.policy || {}, readiness = data.readiness || {}, costs = data.costs || {};
+    text("autonomy-state", readiness.ready ? "Redo inom granskad policy" : policy.enabled ? "Aktiverad · kontroller återstår" : "Avstängd");
+    byId("autonomy-state").className = "badge badge-" + (readiness.ready ? "success" : policy.enabled ? "warning" : "neutral");
+    const stats = byId("autonomy-costs"); stats.replaceChildren(statCard("Sökbudget · kalendermånad", costs.monthly_limit_minor, first(costs.calendar_month, "Stockholm · hårt tak 100 SEK"), true), statCard("Sökningar · förbrukat", costs.monthly_used_minor, "Inkluderar bokfört och utestående ansvar", true), statCard("Sökbudget kvar", costs.monthly_remaining_minor, "Globala budgettak gäller samtidigt", true), statCard("AI-kostnad", costs.ai_cost_minor, "Separat från sök-API · se Ekonomi för perioder", true));
+    summaryRows("autonomy-summary", [["Sökleverantör", policy.provider === "brave" ? "Brave Search" : first(policy.provider, "Ej vald")], ["Servernyckel", data.key_configured ? "Konfigurerad · dold på servern" : "Saknas på servern"], ["Serverns nätverksförmåga", data.runtime_allowed ? "Tillåten · kräver även granskad policy" : "Avstängd"], ["Tillåtna domäner", list(policy.allowed_domains).map((entry) => typeof entry === "string" ? entry : entry.domain).join(", ") || "Inga granskade domäner"], ["Policyrevision", first(policy.revision, "Ej sparad")], ["Sökgränser per uppdrag", number(policy.max_queries_per_mission) + " sökningar · " + number(policy.max_pages_per_mission) + " sidor · " + number(policy.max_rounds) + " omgångar"], ["Tariffberäknad sökkostnad", amount(first(costs.estimated_cost_minor, costs.booked_cost_minor))], ["Leverantörens fakturerade kostnad", costs.billed_cost_minor === null || costs.billed_cost_minor === undefined ? "Inte verifierad · visas inte som faktiskt fakturerad" : amount(costs.billed_cost_minor)], ["Utestående sökreservationer", amount(costs.monthly_reserved_minor)]]);
+    const blockers = byId("autonomy-blockers"); blockers.replaceChildren(...researchReasons(readiness.blockers).map((message) => el("li", "blocker-note", message)));
+    if (!state.v12?.autonomous_research) blockers.append(el("li", "blocker-note", "v1.5-serverns researchdata kunde inte hämtas. Befintliga manuella funktioner bevaras; autonom research är spärrad."));
+    hydrateConfig("autonomy-policy-form", { "autonomy-provider": first(policy.provider, "brave"), "autonomy-allowed-domains": list(policy.allowed_domains).join("\n"), "autonomy-prohibited-domains": list(policy.prohibited_domains).join("\n"), "autonomy-domain-categories": Object.entries(policy.domain_categories || {}).map(([domain, category]) => domain + "=" + category).join("\n"), "autonomy-html": list(policy.allowed_content_types).includes("text/html"), "autonomy-pdf": list(policy.allowed_content_types).includes("application/pdf"), "autonomy-min-reliability": first(policy.min_reliability, 60), "autonomy-source-age": first(policy.max_source_age_days, 730), "autonomy-max-queries": first(policy.max_queries_per_mission, 3), "autonomy-max-pages": first(policy.max_pages_per_mission, 6), "autonomy-max-rounds": first(policy.max_rounds, 3), "autonomy-domain-interval": first(policy.min_domain_interval_seconds, 2), "autonomy-month-limit": number(first(policy.monthly_limit_minor, 10000)) / 100, "autonomy-day-limit": number(first(policy.daily_limit_minor, 1000)) / 100, "autonomy-mission-limit": number(first(policy.mission_limit_minor, 1000)) / 100, "autonomy-terms-reference": first(policy.terms_reference, ""), "autonomy-terms-reviewed": policy.terms_reviewed === true, "autonomy-query-price": first(policy.query_price_usd, ""), "autonomy-pricing-observed": stockholmInput(policy.pricing_observed_at), "autonomy-pricing-evidence": first(policy.pricing_evidence, ""), "autonomy-provider-terms": first(policy.provider_terms_reference, ""), "autonomy-timeout": first(policy.timeout_seconds, 8), "autonomy-max-bytes": first(policy.max_bytes, 524288), "autonomy-max-redirects": first(policy.max_redirects, 2) });
+    const form = byId("autonomy-policy-form"); if (!form.dataset.dirty && !form.contains(document.activeElement)) for (const option of byId("autonomy-categories").options) option.selected = list(first(policy.allowed_categories, ["official", "industry", "company", "public_web"])).includes(option.value);
+    const mode = byId("mission-research-mode").value;
+    text("mission-research-note", mode === "autonomous" ? "Jarvis får själv hitta sidor inom den aktuella webbpolicyn. Inga käll-ID:n krävs för upptäckt. " + (readiness.ready ? "Sökförmågan är redo; uppdragsbudget, AI och övriga kontroller gäller fortfarande." : "Autonom research är ännu spärrad. Granska policy och godkännande under Research & Leads.") : "Manuellt läge använder dina angivna, godkända källor. Inga nya webbsidor söks automatiskt.");
+  }
+  function renderResearchRuns(target, runs, compact = false) {
+    target.replaceChildren();
+    for (const run of latest(runs).slice(0, compact ? 4 : 30)) {
+      const card = el("article", "research-run"); const head = el("div", "task-heading"); head.append(el("strong", "small", first(run.goal, "Researchuppdrag " + first(run.mission_id, run.id, ""))), badge(run.status)); card.append(head);
+      card.append(el("p", "row-meta", "Omgång " + number(run.round) + " · " + list(run.queries).length + " registrerade frågor · " + (Array.isArray(run.pages) ? run.pages.length : number(run.pages)) + " sidläsningar · " + date(first(run.updated_at, run.created_at))));
+      const queries = el("ol", "query-list"); for (const query of list(run.queries)) { const item = el("li"); item.append(el("span", "", typeof query === "string" ? query : first(query.query, query.text, "Registrerad fråga"))); if (typeof query === "object") item.append(el("span", "row-meta", statusLabel(first(query.status, "PENDING")) + (query.cost_minor !== undefined ? " · " + amount(query.cost_minor) : ""))); queries.append(item); } if (queries.children.length) card.append(queries);
+      for (const message of researchReasons(run.gaps)) card.append(el("p", "evidence-gap", message));
+      if (run.blocker) card.append(el("p", "blocker-note", typeof run.blocker === "string" ? first(errorNames[run.blocker], run.blocker) : first(run.blocker.message, errorNames[run.blocker.code], run.blocker.code)));
+      if (run.mission_id && !compact) card.append(routeLink("Öppna uppdrag →", "/missions/" + encodeURIComponent(run.mission_id)));
+      target.append(card);
+    }
+    if (!target.children.length) empty(target, "Inga autonoma sökningar är registrerade. Policyn är avstängd tills du granskat och godkänt den.");
+  }
+  function renderDiscoveredSources(data) {
+    const target = byId("autonomy-sources"), filter = byId("autonomy-source-filter").value; target.replaceChildren();
+    for (const source of latest(data.sources).filter((item) => !filter || sourceState(item) === filter).slice(0, 60)) {
+      const card = el("article", "discovered-source"); const head = el("div", "task-heading"); const status = sourceState(source); head.append(el("h3", "", first(source.title, source.canonical_url, "Upptäckt offentlig källa")), badge(status === "approved" ? "AUTO_APPROVED" : status === "rejected" ? "REJECTED" : "PENDING")); card.append(head);
+      card.append(publicSourceLink(first(source.canonical_url, source.url), first(source.canonical_url, source.url)), el("p", "row-meta", "Utgivare: " + first(source.publisher, source.publisher_group, "Inte verifierad") + " · publicerad " + date(source.published_at) + " · läst " + date(first(source.retrieved_at, source.accessed_at, source.created_at))));
+      if (source.reliability !== undefined || source.confidence !== undefined) card.append(el("p", "small", "Källtillförlitlighet: " + first(source.reliability, source.confidence) + " / 100 · inte ett intyg om varje påstående."));
+      if (source.snippet || source.excerpt) card.append(el("blockquote", "evidence-quote", String(first(source.snippet, source.excerpt)).slice(0, 800)));
+      for (const message of researchReasons(first(source.reasons, source.evaluation?.reasons))) card.append(el("p", status === "rejected" ? "blocker-note" : "muted small", message));
+      for (const message of researchReasons(source.uncertainties)) card.append(el("p", "evidence-gap", message));
+      if (source.content_hash) card.append(el("p", "row-meta source-hash", "Innehålls-ID: " + source.content_hash));
+      card.append(technicalDetails(source)); target.append(card);
+    }
+    if (!target.children.length) empty(target, filter ? "Inga källor med den valda statusen." : "Inga webbkällor har upptäckts. Manuellt godkända kataloger finns i en egen flik.");
+  }
+  function evidencePackCard(pack, compact = false) {
+    const card = el("article", "evidence-pack"), head = el("div", "task-heading"); head.append(el("h3", "", "Faktaunderlag " + String(pack.id || "").slice(0, 12)), badge(pack.status === "COMPLETE" ? "COMPLETED" : "INSUFFICIENT_EVIDENCE")); card.append(head);
+    card.append(el("p", "row-meta", "Uppdrag " + first(pack.mission_id, "—") + " · " + list(pack.sources).length + " källor · " + list(pack.claims).length + " påståenden"));
+    const claims = list(pack.claims); for (const claim of claims.slice(0, compact ? 5 : 40)) {
+      const row = el("div", "claim-card"), heading = el("div", "task-heading"); heading.append(el("strong", "small", first(claim.text, [claim.subject, claim.predicate, claim.value, claim.unit].filter(Boolean).join(" · "), "Registrerat påstående")), badge(claim.status)); row.append(heading);
+      if (claim.rationale) row.append(el("p", "muted small", claim.rationale));
+      row.append(el("p", "row-meta", "Oberoende utgivare: " + number(claim.independent_publisher_count) + " · " + (claim.kind === "hypothesis" || claim.status === "HYPOTHESIS" ? "Hypotes, inte verifierat faktum" : claim.status === "VERIFIED" ? "Samstämmigt källstöd; sakgranskning krävs fortfarande" : "Uppgiften får inte bli obestyrkt affärsbevis")));
+      for (const citation of list(claim.citations).slice(0, compact ? 2 : 8)) { const quote = el("div", "claim-citation"); quote.append(el("blockquote", "evidence-quote", first(citation.snippet, "Exakt stödutdrag saknas")), publicSourceLink(first(citation.publisher, citation.canonical_url, citation.source_id), citation.canonical_url), el("p", "row-meta", "Källa " + first(citation.source_id, "—") + " · läst " + date(citation.retrieved_at))); row.append(quote); }
+      if (!compact) for (const message of researchReasons(claim.reasons)) row.append(el("p", "muted small", message));
+      card.append(row);
+    }
+    for (const message of researchReasons(pack.gaps)) card.append(el("p", "evidence-gap", message));
+    for (const conflict of list(pack.conflicts)) card.append(el("p", "blocker-note", "Motstridiga uppgifter: " + [conflict.subject, conflict.predicate, list(conflict.values).join(" / ")].filter(Boolean).join(" · ")));
+    const uses = list(first(pack.usage, pack.used_by)).concat(list(autonomousState().usage).filter((use) => first(use.evidence_pack_id, use.pack_id) === pack.id));
+    const usage = el("div", "knowledge-usage"); usage.append(el("h4", "", "Användning i agentteamet"));
+    if (!uses.length) usage.append(el("p", "muted small", "Gemensamt underlag är sparat. Ingen efterföljande agentanvändning har registrerats ännu."));
+    for (const use of uses) usage.append(el("p", "small", (agentNames[first(use.role, use.agent_role)] || first(use.role, use.agent_role, "Agent")) + " · " + list(use.claim_ids).length + " refererade påståenden · " + date(first(use.used_at, use.created_at))));
+    card.append(usage, el("p", "footnote", "Beläggens status gäller de citerade uppgifterna. Ingen kontakt, betalning, marknadsefterfrågan eller intäkt följer automatiskt av ett källgodkännande."));
+    if (!compact && pack.mission_id) card.append(routeLink("Öppna uppdrag →", "/missions/" + encodeURIComponent(pack.mission_id))); if (!compact) card.append(technicalDetails(pack)); return card;
+  }
+  function missionWebResearch(mission, detail) {
+    const data = autonomousState(), runs = list(first(detail?.autonomous_research?.runs, data.runs)).filter((run) => run.mission_id === mission.id), packs = list(first(detail?.evidence_packs, detail?.autonomous_research?.evidence_packs, data.evidence_packs)).filter((pack) => pack.mission_id === mission.id);
+    if (mission.research_mode !== "autonomous" && !runs.length && !packs.length) return null;
+    const panel = el("article", "panel mission-web-research"); panel.append(el("div", "panel-heading")); panel.lastChild.append(el("h2", "", "Autonom research & delat faktaunderlag"), routeLink("Sökningar, källor & policy →", "/research/autonomy"));
+    const runBox = el("div"); renderResearchRuns(runBox, runs, true); panel.append(runBox); for (const pack of packs) panel.append(evidencePackCard(pack, true));
+    if (!packs.length) panel.append(el("p", "footnote", "Inget färdigt faktaunderlag har överlämnats. Efterföljande agenter får inte fylla kunskapsluckorna med påhittade affärspåståenden.")); return panel;
+  }
+  function renderAutonomousResearch() {
+    const data = autonomousState(); renderAutonomyPolicy(data); renderResearchRuns(byId("autonomy-runs"), data.runs); renderDiscoveredSources(data);
+    const target = byId("autonomy-evidence"); target.replaceChildren(); for (const pack of latest(data.evidence_packs).slice(0, 30)) target.append(evidencePackCard(pack)); if (!target.children.length) empty(target, "Inga autonoma faktaunderlag är sparade. Brist på belägg ska redovisas, aldrig ersättas med fabricerade fakta.");
+  }
+  byId("mission-research-mode").addEventListener("change", () => renderAutonomyPolicy(autonomousState()));
+  byId("autonomy-source-filter").addEventListener("change", () => renderDiscoveredSources(autonomousState()));
+  byId("autonomy-policy-form").addEventListener("submit", async (event) => {
+    event.preventDefault(); if (!isAdmin() || !state.v12?.autonomous_research) return;
+    const split = (value) => value.split(/[\n,]/).map((entry) => entry.trim()).filter(Boolean), categories = {};
+    for (const line of byId("autonomy-domain-categories").value.split(/\n/).filter((entry) => entry.trim())) { const parts = line.split("=").map((entry) => entry.trim()); if (parts.length !== 2 || !parts[0] || !parts[1]) { showError("Ange domänkategori som domän=kategori, en per rad."); return; } categories[parts[0]] = parts[1]; }
+    const observed = parseStockholmInput(byId("autonomy-pricing-observed").value); if (!Number.isFinite(observed)) { showError("Ange en giltig observationstid i Stockholm för det verifierade priset."); return; }
+    const body = { provider: byId("autonomy-provider").value, allowed_domains: split(byId("autonomy-allowed-domains").value), prohibited_domains: split(byId("autonomy-prohibited-domains").value), domain_categories: categories, allowed_categories: [...byId("autonomy-categories").selectedOptions].map((option) => option.value), allowed_content_types: [["autonomy-html", "text/html"], ["autonomy-pdf", "application/pdf"]].filter(([id]) => byId(id).checked).map(([, type]) => type), terms_reviewed: byId("autonomy-terms-reviewed").checked, terms_reference: byId("autonomy-terms-reference").value.trim(), provider_terms_reference: byId("autonomy-provider-terms").value.trim(), monthly_limit_minor: Math.round(Number(byId("autonomy-month-limit").value) * 100), daily_limit_minor: Math.round(Number(byId("autonomy-day-limit").value) * 100), mission_limit_minor: Math.round(Number(byId("autonomy-mission-limit").value) * 100), query_price_usd: byId("autonomy-query-price").value.trim(), pricing_observed_at: observed, pricing_evidence: byId("autonomy-pricing-evidence").value.trim(), min_reliability: Number(byId("autonomy-min-reliability").value), max_source_age_days: Number(byId("autonomy-source-age").value), max_queries_per_mission: Number(byId("autonomy-max-queries").value), max_pages_per_mission: Number(byId("autonomy-max-pages").value), max_rounds: Number(byId("autonomy-max-rounds").value), max_concurrent_calls: 1, min_domain_interval_seconds: Number(byId("autonomy-domain-interval").value), timeout_seconds: Number(byId("autonomy-timeout").value), max_bytes: Number(byId("autonomy-max-bytes").value), max_redirects: Number(byId("autonomy-max-redirects").value), reason: byId("autonomy-policy-reason").value.trim() };
+    await saveConfig("autonomy-policy-form", "autonomy-policy-save", "/api/research/autonomy/policy", body, "Webbpolicyn är sparad. Separat godkännande krävs innan betald research får aktiveras.");
+  });
+  byId("autonomy-activation-form").addEventListener("submit", async (event) => {
+    event.preventDefault(); if (!isAdmin() || !autonomousState().policy?.revision || isKilled()) return;
+    if (!window.confirm("Godkänn betald offentlig webbresearch inom aktuell domänpolicy, sökbudget och övriga kostnadstak? Inga kundutskick, köp eller betalningar aktiveras.")) return;
+    const saved = await saveConfig("autonomy-activation-form", "autonomy-activate", "/api/research/autonomy/activation", { statement: byId("autonomy-activation-statement").value.trim(), policy_revision: autonomousState().policy.revision, reason: byId("autonomy-activation-reason").value.trim() }, "Det separata researchbeslutet är registrerat. Servernyckel, nätverksförmåga och alla budgetkontroller gäller fortfarande."); if (saved) byId("autonomy-activation-form").reset();
+  });
+  byId("autonomy-deactivate").addEventListener("click", async () => {
+    if (!isAdmin() || !autonomousState().policy?.revision) return; const reason = window.prompt("Varför ska autonom webbresearch pausas? Redan bokförda kostnader och faktaunderlag bevaras.", ""); if (!reason || reason.trim().length < 12) return;
+    await mutate(byId("autonomy-deactivate"), "/api/research/autonomy/activation", { statement: "DISABLE WEB RESEARCH", policy_revision: autonomousState().policy.revision, reason: reason.trim() }, "Autonom webbresearch är pausad. Historik och kostnader bevaras.");
+  });
+
   function renderV13() {
     if (!state.user || !state.v12) return;
-    loadCurrentDetail(); renderDashboard(); renderMissionLists(); renderMissionDetail(); renderAgentViews(); renderDeliverables(); renderFinanceV13(); renderReportsV13(); renderCatalogue(); renderSourceDocuments();
+    loadCurrentDetail(); renderDashboard(); renderMissionLists(); renderMissionDetail(); renderAgentViews(); renderDeliverables(); renderFinanceV13(); renderReportsV13(); renderCatalogue(); renderSourceDocuments(); renderAutonomousResearch();
   }
 
   selectPage();

@@ -178,6 +178,10 @@ Ett samordnat AI-team.</h1>
 <form id="mission-form" class="config-form">
 <fieldset data-operator-only>
 <label for="mission-goal">Mål och avgränsning</label><textarea id="mission-goal" rows="3" required minlength="20" maxlength="4000" placeholder="Analysera möjligheter för AI-assistenten utifrån våra godkända företagsunderlag."></textarea><div class="form-grid">
+<div class="full-width">
+<label for="mission-research-mode">Hur ska underlaget tas fram?</label><select id="mission-research-mode"><option value="manual">Använd befintliga, manuellt godkända källor</option><option value="autonomous">Sök självständigt inom granskad webbpolicy</option></select>
+<p id="mission-research-note" class="footnote">Manuellt läge använder dina angivna källor. Autonomt läge hittar sidor inom en separat godkänd policy och kräver sökbudget, servernyckel och AI-godkännande.</p>
+</div>
 <div>
 <label for="mission-sources">Godkända käll-ID:n</label><input id="mission-sources" maxlength="800" placeholder="granskad-katalog">
 </div>
@@ -272,7 +276,7 @@ Ett samordnat AI-team.</h1>
         <div id="research-sales-offers"></div></section><section id="view-research-sources" class="route-panel" data-panel="research/sources" hidden="hidden"><div class="view-heading"><div>
 <p class="eyebrow">JARVIS / BUSINESS OS</p>
 <h1>Godkända källor</h1>
-<p class="muted">Registrera underlag och dokumentera uttryckligt tillstånd före användning.</p>
+<p class="muted">Manuellt godkända underlag bevaras här. Nya webbkällor kan granskas automatiskt inom en separat, förhandsgodkänd policy.</p>
 </div></div>
 <article class="panel source-panel"><div class="panel-heading">
 <div>
@@ -321,7 +325,41 @@ Ett samordnat AI-team.</h1>
 <h1>Källbelagda analyser</h1>
 <p class="muted">Sparade researchresultat, hämtningstid och redovisade osäkerheter.</p>
 </div></div>
-<div id="v13-research-reports"></div></section><section id="view-deliverables-library" class="route-panel" data-panel="deliverables/library" hidden="hidden"><div class="view-heading"><div>
+<div id="v13-research-reports"></div></section><section id="view-research-autonomy" class="route-panel" data-panel="research/autonomy" hidden="hidden"><div class="view-heading"><div>
+<p class="eyebrow">RESEARCH / KÄLLBELAGDA BESLUT</p><h1>Autonom webbresearch</h1>
+<p class="muted">Från informationsbehov till delat faktaunderlag. Jarvis söker och granskar sidor inom din policy; obestyrkta slutsatser stannar vid kunskapsluckor.</p>
+</div><span id="autonomy-state" class="badge badge-neutral">Avstängd</span></div>
+<div id="autonomy-costs" class="detail-stats autonomy-costs"></div>
+<article class="panel autonomy-readiness"><div class="panel-heading"><h2>Förmåga &amp; godkännande</h2><a href="/missions/new" data-route="/missions/new" class="button button-small button-primary">Nytt researchuppdrag</a></div>
+<dl id="autonomy-summary" class="connection-list"></dl><ul id="autonomy-blockers" class="content-list"></ul>
+<p class="footnote">Ingen enskild sida behöver ditt godkännande när den klarar policyn. En trovärdig avsändare bevisar däremot inte varje affärspåstående. Oskickade utkast, antaganden och verifierade intäkter hålls isär.</p>
+<details class="admin-settings"><summary>Granska domäner, kvalitet och sökbudget</summary>
+<form id="autonomy-policy-form" class="config-form"><fieldset data-admin-only>
+<div class="form-grid"><div><label for="autonomy-provider">Sökleverantör</label><select id="autonomy-provider"><option value="brave">Brave Search</option></select></div><div><label for="autonomy-month-limit">Sökbudget per kalendermånad, SEK · högst 100</label><input id="autonomy-month-limit" type="number" min="0" max="100" step="0.01" value="100" required></div></div>
+<label for="autonomy-allowed-domains">Tillåtna domäner · en per rad eller kommatecken</label><textarea id="autonomy-allowed-domains" rows="3" maxlength="3000" required placeholder="myndighet.se&#10;branschorganisation.se"></textarea>
+<label for="autonomy-prohibited-domains">Spärrade domäner</label><textarea id="autonomy-prohibited-domains" rows="2" maxlength="3000" placeholder="Undantag som aldrig får läsas"></textarea>
+<div class="form-grid"><div><label for="autonomy-categories">Tillåtna källkategorier</label><select id="autonomy-categories" multiple size="4"><option value="official" selected>Myndigheter &amp; officiella källor</option><option value="industry" selected>Branschorganisationer</option><option value="company" selected>Företagens egna uppgifter</option><option value="public_web" selected>Övrig granskad offentlig webb</option></select></div><div><label for="autonomy-domain-categories">Domänens kategori · valfritt, domän=kategori</label><textarea id="autonomy-domain-categories" rows="4" maxlength="4000" placeholder="myndighet.se=official&#10;branschorganisation.se=industry"></textarea></div></div>
+<div class="checkbox-group"><label class="checkbox-label"><input id="autonomy-html" type="checkbox" checked> Offentliga HTML-sidor</label><label class="checkbox-label"><input id="autonomy-pdf" type="checkbox" checked> Tillåtna offentliga PDF-dokument</label></div>
+<div class="form-grid"><div><label for="autonomy-min-reliability">Lägsta källtillförlitlighet, 0–100</label><input id="autonomy-min-reliability" type="number" min="0" max="100" value="60" required></div><div><label for="autonomy-source-age">Högsta källålder, dagar</label><input id="autonomy-source-age" type="number" min="1" max="3650" value="730" required></div><div><label for="autonomy-max-queries">Högst sökningar per uppdrag</label><input id="autonomy-max-queries" type="number" min="1" max="10" value="3" required></div><div><label for="autonomy-max-pages">Högst sidläsningar per uppdrag</label><input id="autonomy-max-pages" type="number" min="1" max="20" value="6" required></div><div><label for="autonomy-max-rounds">Högst kompletterande sökomgångar</label><input id="autonomy-max-rounds" type="number" min="1" max="3" value="3" required></div><div><label for="autonomy-domain-interval">Minsta intervall per domän, sekunder</label><input id="autonomy-domain-interval" type="number" min="1" max="3600" value="2" required></div><div><label for="autonomy-day-limit">Sökbudget per dygn, SEK</label><input id="autonomy-day-limit" type="number" min="0" max="100" step="0.01" value="10" required></div><div><label for="autonomy-mission-limit">Sökbudget per uppdrag, SEK</label><input id="autonomy-mission-limit" type="number" min="0" max="100" step="0.01" value="10" required></div></div>
+<p class="footnote">Högst ett externt researchanrop åt gången. Globala verktygs-, uppdrags- och startbudgetar gäller samtidigt; sökbudget är inte ett nytt kostnadsmandat.</p>
+<label for="autonomy-terms-reference">Granskade åtkomst- och återanvändningsvillkor för domänerna</label><textarea id="autonomy-terms-reference" rows="2" minlength="12" maxlength="500" required placeholder="Dokumentera vad som får läsas och användas inom policyn"></textarea>
+<label class="checkbox-label"><input id="autonomy-terms-reviewed" type="checkbox" required> Jag har granskat domänernas villkor. Robotsregler, spärrar och åtkomstbegränsningar ska alltid respekteras.</label>
+<details class="advanced-controls"><summary>Verifierat leverantörspris och tekniska säkerhetsgränser</summary>
+<div class="form-grid"><div><label for="autonomy-query-price">Verifierat pris per sökning, USD</label><input id="autonomy-query-price" type="number" min="0.000001" max="1" step="0.000001" required placeholder="Inget pris antas"></div><div><label for="autonomy-pricing-observed">Prisets observationstid · Stockholm</label><input id="autonomy-pricing-observed" type="datetime-local" required></div><div><label for="autonomy-timeout">Högsta hämtningstid, sekunder</label><input id="autonomy-timeout" type="number" min="1" max="10" value="8" required></div><div><label for="autonomy-max-bytes">Högsta dokumentstorlek, byte</label><input id="autonomy-max-bytes" type="number" min="1024" max="1048576" value="524288" required></div><div><label for="autonomy-max-redirects">Högst validerade omdirigeringar</label><input id="autonomy-max-redirects" type="number" min="0" max="2" value="2" required></div></div>
+<label for="autonomy-pricing-evidence">Daterad prisreferens och beräkningsgrund</label><textarea id="autonomy-pricing-evidence" rows="2" minlength="12" maxlength="500" required placeholder="Officiellt underlag för granskad plan och kostnad per sökning"></textarea>
+<label for="autonomy-provider-terms">Sökleverantörens granskade villkor och plan</label><textarea id="autonomy-provider-terms" rows="2" minlength="12" maxlength="500" required placeholder="Inget abonnemang köps eller aktiveras av Jarvis"></textarea>
+<p class="footnote">API-nyckeln konfigureras endast på servern. Pris, villkor och valutakurs måste vara aktuella. Tariffberäknad kostnad är inte samma sak som en fakturerad leverantörskostnad.</p></details>
+<label for="autonomy-policy-reason">Granskningsbeslut</label><input id="autonomy-policy-reason" minlength="12" maxlength="500" required placeholder="Varför denna avgränsning, kvalitet och kostnadsram är lämplig"><button id="autonomy-policy-save" type="submit" class="button button-secondary">Spara granskad policy · håll avstängd</button>
+</fieldset></form></details>
+<details class="admin-settings"><summary>Separat beslut om betald webbresearch</summary><form id="autonomy-activation-form" class="config-form"><fieldset data-admin-only>
+<p class="muted small">Gäller aktuell policyrevision och återstående budget. Ett sparat pris eller en servernyckel aktiverar inte sökningar.</p>
+<label for="autonomy-activation-statement">Skriv I APPROVE PAID WEB RESEARCH</label><input id="autonomy-activation-statement" required autocomplete="off" spellcheck="false" pattern="I APPROVE PAID WEB RESEARCH">
+<label for="autonomy-activation-reason">Beslutsunderlag</label><input id="autonomy-activation-reason" minlength="12" maxlength="500" required><div class="button-row"><button id="autonomy-activate" class="button button-secondary" type="submit">Godkänn autonom webbresearch</button><button id="autonomy-deactivate" class="button button-secondary" type="button">Pausa autonom webbresearch</button></div>
+</fieldset></form></details></article>
+<article class="panel"><div class="panel-heading"><div><h2>Sökningar &amp; kunskapsluckor</h2><p class="muted small">Registrerade frågor, körningar och gränser. Saknade belägg visas som luckor, inte som nya fakta.</p></div></div><div id="autonomy-runs"></div></article>
+<article class="panel"><div class="panel-heading"><div><h2>Upptäckta källor</h2><p class="muted small">Automatiskt godkännande gäller bara användning som underlag enligt aktuell policy.</p></div><label class="source-status-filter"><span class="sr-only">Filtrera källstatus</span><select id="autonomy-source-filter"><option value="">Alla källor</option><option value="approved">Automatiskt godkända</option><option value="rejected">Avvisade</option><option value="pending">Väntar på granskning</option></select></label></div><div id="autonomy-sources" class="autonomy-source-grid"></div></article>
+<article class="panel"><h2>Delat faktaunderlag &amp; påståenden</h2><p class="muted small">Varje påstående ska ha exakta utdrag och en spårbar bedömning. Källans autenticitet betyder inte att affärsbehov, marknadsefterfrågan eller lönsamhet är verifierad.</p><div id="autonomy-evidence"></div></article>
+</section><section id="view-deliverables-library" class="route-panel" data-panel="deliverables/library" hidden="hidden"><div class="view-heading"><div>
 <p class="eyebrow">JARVIS / BUSINESS OS</p>
 <h1>Resultat som går att granska</h1>
 <p class="muted">Rapporter, planer och interna underlag med versionshistorik.</p>
