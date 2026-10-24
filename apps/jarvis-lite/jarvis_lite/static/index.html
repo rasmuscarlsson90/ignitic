@@ -466,7 +466,8 @@ Ett samordnat AI-team.</h1>
 </div>
 <label for="ai-reason">Granskningsanteckning</label><input id="ai-reason" minlength="12" maxlength="500" required placeholder="Varför modell och kostnadsram är lämpliga"><button id="ai-config-save" class="button button-secondary" type="submit">Spara granskade modellinställningar</button>
 </fieldset></form>
-<p class="footnote">En ändrad konfiguration kan kräva ett nytt separat godkännande. Sparandet aktiverar aldrig AI automatiskt.</p></details>
+<p id="ai-timeout-policy" class="footnote">Stödd timeout är högst 20 sekunder per leverantörsanrop. Worker- och hostingstöd för 120 sekunder är inte verifierat.</p>
+<p class="footnote">Ändrade modellinställningar spärrar betalda AI-anrop tills en administratör separat godkänner den nya revisionen. Sparandet aktiverar aldrig AI automatiskt. Rollernas lägre svarstak granskas i Agent Control Center.</p></details>
               <details class="admin-settings"><summary>Separat beslut om betalda interna AI-anrop</summary><form id="ai-activation-form" class="config-form"><fieldset data-admin-only>
 <p class="muted small">Godkännandet gäller aktuell modellrevision och budget. Det kan medföra verklig AI-kostnad. Ingen kontakt eller betalning aktiveras.</p>
 <label for="ai-activation-statement">Skriv I APPROVE PAID AI CALLS</label><input id="ai-activation-statement" required autocomplete="off" spellcheck="false" pattern="I APPROVE PAID AI CALLS"><label for="ai-activation-reason">Beslutsunderlag</label><input id="ai-activation-reason" minlength="12" maxlength="500" required><div class="button-row">
@@ -493,7 +494,7 @@ Ett samordnat AI-team.</h1>
 <span id="security-mode" class="badge badge-demo">DEMO</span>
 </div>
 <dl id="connections-list" class="connection-list"></dl>
-<p class="footnote">API-nycklar visas aldrig. I v1.3 är verkliga kundutskick och betalningar permanent spärrade.</p></article><article class="panel"><h2>Uppdatera en serverhemlighet</h2>
+<p class="footnote">API-nycklar visas aldrig. I v1.4 är verkliga kundutskick och betalningar permanent spärrade.</p></article><article class="panel"><h2>Uppdatera en serverhemlighet</h2>
 <form id="secret-config-form" class="config-form"><fieldset data-admin-only>
 <label for="secret-name">Nyckeltyp</label><select id="secret-name"><option>OPENROUTER_API_KEY</option>
 <option>BREVO_API_KEY</option>
@@ -758,18 +759,18 @@ Ett samordnat AI-team.</h1>
           <div class="section-heading">
 <div>
 <span class="eyebrow">FÖRBERED, GRANSKA, GODKÄNN</span><h2 id="preparation-title">Källor, AI &amp; schemaläggning</h2>
-<p class="muted">Interna AI-anrop har separat kostnadsgodkännande. Verkliga kundutskick och betalningar är spärrade i v1.3.</p>
+<p class="muted">Interna AI-anrop har separat kostnadsgodkännande. Verkliga kundutskick och betalningar är spärrade i v1.4.</p>
 </div>
-<span class="badge badge-neutral">Jarvis Lite v1.3</span>
+<span class="badge badge-neutral">Jarvis Lite v1.4</span>
 </div>
           <div class="preparation-grid">
             </div>
           <article class="panel readiness-panel"><div class="panel-heading">
-<h3>Kundkontakt och betalningar är spärrade i v1.3</h3>
+<h3>Kundkontakt och betalningar är spärrade i v1.4</h3>
 <span id="outreach-state" class="badge badge-neutral">Spärrad</span>
 </div>
 <dl id="outreach-summary" class="connection-list"></dl>
-<p class="footnote">Historiska granskningsunderlag bevaras. v1.3 medger endast intern research, AI-bearbetning, offertutkast och leverabler. Kundutskick och betalningsåtgärder kan inte aktiveras i denna version.</p></article>
+<p class="footnote">Historiska granskningsunderlag bevaras. v1.4 medger endast intern research, AI-bearbetning, offertutkast och leverabler. Kundutskick och betalningsåtgärder kan inte aktiveras i denna version.</p></article>
         </section>
 
         <section id="operations" class="page-section" aria-labelledby="operations-title" hidden="hidden"><div class="section-heading">

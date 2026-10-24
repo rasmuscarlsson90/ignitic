@@ -159,7 +159,7 @@ def create_app(database=None, *, worker_enabled=None):
         if database is None:
             db.close()
 
-    app = FastAPI(title="Jarvis Lite · powered by Ignitic", version="1.3.0", lifespan=lifespan,
+    app = FastAPI(title="Jarvis Lite · powered by Ignitic", version="1.4.0", lifespan=lifespan,
                   docs_url=None if production else "/docs")
     app.state.db = db
 
@@ -205,7 +205,7 @@ def create_app(database=None, *, worker_enabled=None):
     def health():
         with db.engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        return {"status": "healthy", "service": "jarvis-lite", "version": "1.3.0"}
+        return {"status": "healthy", "service": "jarvis-lite", "version": "1.4.0"}
 
     @app.post("/api/auth/login")
     def login(body: Login, request: Request):
@@ -479,6 +479,8 @@ def create_app(database=None, *, worker_enabled=None):
     register_v12(app, db, who)
     from .api_v13 import register_routes as register_v13
     register_v13(app, db, who)
+    from .api_v14 import register_routes as register_v14
+    register_v14(app, db, who)
 
     @app.post("/api/leads/{lead_id}/{action}")
     def lead_action(lead_id: str, action: Literal["research", "qualify", "compliance", "proposal", "accept", "deliver"], body: Data, request: Request):

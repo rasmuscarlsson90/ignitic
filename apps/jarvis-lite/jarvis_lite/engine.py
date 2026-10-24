@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import time
 
 from . import ai, budget, jobs, policy
@@ -32,6 +33,8 @@ TERMINAL = frozenset({"COMPLETED", "BLOCKED", "UNCERTAIN", "FAILED", "PAUSED", "
 SCHEDULE_FIELDS = ("schedule_id", "schedule_revision", "schedule_run_id")
 MAX_TASKS = 7
 MAX_V13_TASKS = 9
+MAX_STEP_RECOVERIES = 2
+RECOVERABLE_AI_CODES = frozenset({"ai_output_truncated", "ai_json_invalid", "ai_schema_invalid"})
 MISSION_LIMITS = {"max_steps": (7, MAX_V13_TASKS, MAX_V13_TASKS), "max_retries": (0, 2, 1),
                   "deadline_seconds": (60, 86400, 3600), "max_revisions": (0, 1, 1)}
 
@@ -47,8 +50,10 @@ def _reason(reason):
 
 
 def _deadline(tx, mission):
-    if _v13(mission) and mission.get("deadline_at", tx.now + 1) <= tx.now:
-        raise PolicyError("mission_deadline", "Uppdragets tidsgräns har passerat. Inga fler AI-anrop tillåts.", 423)
+    if _v13(mission):
+        deadline = mission.get("deadline_at")
+        if type(deadline) not in {int, float} or not math.isfinite(deadline) or deadline <= tx.now:
+            raise PolicyError("mission_deadline", "Uppdragets tidsgräns har passerat eller är ogiltig. Inga fler AI-anrop tillåts.", 423)
 
 
 def _failure_message(code):
@@ -60,6 +65,9 @@ def _failure_message(code):
             "agent_tool_denied": "Agentrollen saknar det verktyg som delsteget kräver.",
             "lease_exhausted": "Delsteget nådde gränsen för omstartsförsök.",
             "attempt_limit": "Delsteget nådde gränsen för omförsök.",
+            "ai_output_truncated": "AI-svaret nådde token-gränsen och är ofullständigt. Granska aktuella modellgränser och godkänn ett nytt försök.",
+            "ai_json_invalid": "AI-svaret innehåller ogiltig JSON. Ett nytt försök kräver granskning.",
+            "ai_schema_invalid": "AI-svaret följer inte rollens svarsschema. Ett nytt försök kräver granskning.",
             "mission_deadline": "Uppdragets tidsgräns har passerat.",
             "UNKNOWN": "Leverantörens utfall är okänt. Reserverad kostnad behålls för manuell avstämning.",
             "UNCERTAIN": "Leverantörens utfall är okänt. Reserverad kostnad behålls för manuell avstämning."}.get(str(code), "Delsteget stoppades av en kontroll. Granska felkoden och underlaget innan du återupptar.")
@@ -79,6 +87,7 @@ def _config(tx, role):
     _role(role)
     return {"role": role, "enabled": True, "priority": 50, "per_call_limit_minor": 200,
             "daily_budget_minor": 10000, "max_calls_per_day": 30,
+            "max_output_tokens": None,
             "tools": sorted(ROLE_TOOLS[role]),
             **(tx.get("agent_config", role) or {})}
 
@@ -107,7 +116,7 @@ def _mission_cost(tx, mission_id):
                or str(entry.get("workflow_id", "")).startswith(prefix))
 
 
-def guard_ai_budget(tx, role, estimate, missionid=None, *, reservation_active=False):
+def guard_ai_budget(tx, role, estimate, missionid=None, *, reservation_active=False, _reviewed_retry=False):
     """Additional serialized caps used by every real AI call, including direct APIs.
 
     Pending liabilities never age out. Before dispatch the current reservation is
@@ -138,7 +147,8 @@ def guard_ai_budget(tx, role, estimate, missionid=None, *, reservation_active=Fa
         raise PolicyError("agent_daily_calls", "The bounded daily AI call count is exhausted")
     if missionid:
         mission = tx.get("business_mission", missionid)
-        if not mission or mission.get("status") not in {"QUEUED", "RUNNING"}:
+        allowed_states = {"QUEUED", "RUNNING", "REVIEW_REQUIRED", "PAUSED"} if _reviewed_retry else {"QUEUED", "RUNNING"}
+        if not mission or mission.get("status") not in allowed_states:
             raise PolicyError("mission_not_active", "The mission cannot authorize paid work", 423)
         _deadline(tx, mission)
         if _mission_cost(tx, missionid) + addition > mission["max_cost_minor"]:
@@ -174,7 +184,7 @@ def guard_tool_budget(tx, role, estimate, missionid=None, *, reservation_active=
 def configure_agent(tx, role, config, actor):
     policy.require_admin(actor)
     _role(role)
-    fields = {"enabled", "priority", "per_call_limit_minor", "daily_budget_minor", "max_calls_per_day", "tools"}
+    fields = {"enabled", "priority", "per_call_limit_minor", "daily_budget_minor", "max_calls_per_day", "tools", "max_output_tokens"}
     if not isinstance(config, dict) or set(config) - (fields | {"reason"}):
         raise PolicyError("agent_config_invalid", "Only supported agent controls may be configured", 422)
     reason = config.get("reason", "")
@@ -186,6 +196,7 @@ def configure_agent(tx, role, config, actor):
             or not _integer(value["per_call_limit_minor"], 1, 50000)
             or not _integer(value["daily_budget_minor"], 0, 50000)
             or not _integer(value["max_calls_per_day"], 1, 100)
+            or value["max_output_tokens"] is not None and not _integer(value["max_output_tokens"], 1, ai._config(tx)["max_output_tokens"])
             or not isinstance(value["tools"], list)
             or any(not isinstance(tool, str) or tool not in ROLE_TOOLS[role] for tool in value["tools"])
             or len(set(value["tools"])) != len(value["tools"])):
@@ -222,7 +233,7 @@ def _save(tx, kind, record):
 def _enqueue(tx, mission, task):
     payload = {"mission_id": mission["id"], "task_id": task["id"], "role": task["role"],
                **{field: mission[field] for field in SCHEDULE_FIELDS if field in mission}}
-    job = jobs.enqueue(tx, "internal_agent", payload, idempotency_key="agent:" + task["id"],
+    job = jobs.enqueue(tx, "internal_agent", payload, idempotency_key=_request_key(task),
                        actor=mission["requested_by"])
     job["priority"] = min(mission["priority"], _config(tx, task["role"])["priority"])
     if _v13(mission):
@@ -231,6 +242,10 @@ def _enqueue(tx, mission, task):
     tx.put("job", job["id"], job)
     task["job_id"] = job["id"]
     return _save(tx, "agent_task", task)
+
+
+def _request_key(task):
+    return task.get("request_key") or "agent:" + task["id"]
 
 
 def _task_id(mission_id, step):
@@ -320,7 +335,7 @@ def _real_ai(tx, mission, task, prompt):
     try:
         result = ai.task(tx, role=task["role"], text=prompt,
                          workflow_id="mission:" + mission["id"] + ":" + task["role"],
-                         idempotency_key="agent:" + task["id"],
+                         idempotency_key=_request_key(task),
                          actor={"id": "agent:" + task["role"], "role": "operator"})
     finally:
         tx.agent_context = previous_context
@@ -426,13 +441,20 @@ def _facts(tx, mission):
 def _handler(tx, mission, task):
     role = task["role"]
     actor = {"id": "agent:" + role, "role": "operator"}
-    key = "agent:" + task["id"]
+    key = _request_key(task)
     if role == "ceo" and task["step"] == "plan":
         return _plan(tx, mission, task)
     if role == "lead_research":
         _allowed(tx, role, "approved_research")
         from . import intelligence
-        report = intelligence.run_research(tx, mission, actor, key)
+        # A recovery is an AI-only request using retained approved evidence.
+        # Preflight requires current data for every source, so this cannot
+        # trigger a source refresh with a new network/request identity.
+        if task.get("retry_id"):
+            source_mission = {**mission, "refresh_sources": False}
+            report = intelligence.run_research(tx, source_mission, actor, key)
+        else:
+            report = intelligence.run_research(tx, mission, actor, key)
         if report.get("status") == "COMPLETED":
             mission["research_report_id"] = report["id"]
             mission["lead_ids"] = report.get("lead_ids", [])[:10]
@@ -601,9 +623,16 @@ def _ready_tasks(tx, mission):
     if len(tasks) > (mission.get("max_steps", MAX_TASKS) if _v13(mission) else MAX_TASKS):
         raise PolicyError("mission_graph_limit", "The durable task graph exceeded its hard limit")
     for task in tasks.values():
-        if task["status"] == "QUEUED" and not task.get("job_id") and all(
-                tasks[dep]["status"] == "COMPLETED" for dep in task["dependencies"]):
-            _enqueue(tx, mission, task)
+        if task["status"] == "QUEUED" and all(tasks[dep]["status"] == "COMPLETED" for dep in task["dependencies"]):
+            if not task.get("job_id"):
+                _enqueue(tx, mission, task)
+            elif task.get("recovery_resume_pending"):
+                job = tx.get("job", task["job_id"])
+                if job and job.get("status") == "paused":
+                    jobs.resume(tx, job["id"], actor={"id": mission.get("retry_reviewed_by"), "role": "admin"},
+                                reason="Explicit mission recovery; completed prerequisites retained")
+                    task.pop("recovery_resume_pending", None)
+                    _save(tx, "agent_task", task)
 
 
 def execute_agent(tx, job):
@@ -625,6 +654,11 @@ def execute_agent(tx, job):
     policy.guard(tx, "job", actor={"id": "agent:" + task["role"], "role": "operator"})
     previous_context = getattr(tx, "agent_context", None)
     tx.agent_context = {"mission_id": mission["id"], "task_id": task["id"], "role": task["role"]}
+    if task.get("retry_id"):
+        retry = tx.get("mission_retry", task["retry_id"])
+        if not retry or retry.get("job_id") != job["id"]:
+            raise PolicyError("mission_retry_invalid", "Agentjobbet saknar ett granskat beständigt återförsök.")
+        tx.agent_context.update(retry_id=retry["id"], retry_of_trace_id=retry["previous_trace_id"])
     task.update(status="RUNNING", started_at=task.get("started_at", tx.now))
     mission["status"] = "RUNNING"
     _save(tx, "agent_task", task)
@@ -637,6 +671,11 @@ def execute_agent(tx, job):
         state = ai.status(tx)
         if not state.get("effective_paid_enabled"):
             raise PolicyError("ai_not_ready", state.get("reason") or "Reviewed real AI is not enabled", 423)
+        if task.get("retry_id"):
+            guard_retry_dispatch(tx)
+            _retry_checks(tx, mission, task, tx.get("ai_trace", retry["previous_trace_id"]))
+            retry.update(status="RUNNING", started_at=tx.now)
+            tx.put("mission_retry", retry["id"], retry)
         result = _handler(tx, mission, task)
     except PolicyError as error:
         result = {"status": "BLOCKED", "code": error.code, "reason": error.message}
@@ -688,6 +727,11 @@ def execute_agent(tx, job):
         mission["blocker"] = None
     task.update(output=result, finished_at=tx.now)
     _save(tx, "agent_task", task)
+    if task.get("retry_id"):
+        retry = tx.get("mission_retry", task["retry_id"])
+        if retry:
+            retry.update(status=task["status"], error_code=task.get("error_code"), finished_at=tx.now)
+            tx.put("mission_retry", retry["id"], retry)
     mission["actual_and_pending_cost_minor"] = _mission_cost(tx, mission["id"])
     _save(tx, "business_mission", mission)
     if task["status"] == "COMPLETED" and mission["status"] == "RUNNING":
@@ -881,6 +925,303 @@ def pause_mission(tx, mission_id, actor, reason="Administrator paused this inter
     return mission
 
 
+def _retry_sources(tx, mission):
+    """Reusing a completed result never revives its revoked/stale evidence."""
+    from . import research
+    source_ids = set(mission.get("source_ids", []))
+    snapshots = []
+
+    def collect(value):
+        if isinstance(value, dict):
+            if isinstance(value.get("source_id"), str):
+                source_ids.add(value["source_id"])
+                if "source_version" in value:
+                    snapshots.append((value["source_id"], value["source_version"]))
+            for item in value.values():
+                collect(item)
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+
+    for kind in ("research_report", "service_order", "service_result", "opportunity_report", "sales_offer"):
+        for item in tx.list(kind):
+            if item.get("mission_id") == mission["id"]:
+                collect(item)
+    for lead_id in mission.get("lead_ids", []):
+        lead = tx.get("lead", lead_id)
+        if not lead:
+            raise PolicyError("retry_source_changed", "Ett tidigare leadunderlag saknas. Slutförda steg får inte ersättas automatiskt.")
+        collect(lead.get("citations", []))
+    sources = {source_id: research._approved(tx, source_id) for source_id in source_ids}
+    if any(source.get("data_mode", "REAL") != "REAL" for source in sources.values()):
+        raise PolicyError("retry_source_changed", "Demokällor kan inte återanvändas som verkligt underlag.")
+    if any(sources[source_id].get("version") != version for source_id, version in snapshots):
+        raise PolicyError("retry_source_changed", "Källversionen har ändrats sedan tidigare resultat. Ny sakgranskning krävs; färdiga steg körs inte om.")
+    return sources
+
+
+def _output_traces(tx, output):
+    found = set()
+    if isinstance(output, dict):
+        if isinstance(output.get("trace_id"), str):
+            found.add(output["trace_id"])
+        result = tx.get("agent_result", output.get("ai_result_id", "")) if isinstance(output.get("ai_result_id"), str) else None
+        if result and result.get("trace_id"):
+            found.add(result["trace_id"])
+        for value in output.values():
+            found.update(_output_traces(tx, value))
+    elif isinstance(output, list):
+        for value in output:
+            found.update(_output_traces(tx, value))
+    return found
+
+
+def _undispatched_retry(tx, retry):
+    """Only durable no-call or definitively released dispatches can be renewed."""
+    traces = [trace for trace in tx.list("ai_trace") if trace.get("retry_id") == retry["id"]]
+    return all(trace.get("status") == "BLOCKED"
+               and (tx.get("budget_entry", trace.get("reservation_id", "")) or {}).get("state") == "RELEASED"
+               for trace in traces)
+
+
+def _retry_failure_output(tx, task):
+    output = task.get("output")
+    retry = tx.get("mission_retry", task.get("retry_id", ""))
+    if (retry and retry.get("task_id") == task["id"] and _undispatched_retry(tx, retry)
+            and task.get("status") in {"PAUSED", "BLOCKED", "FAILED", "REVIEW_REQUIRED"}):
+        # A preflight/configuration fence is not a new model response. Retain
+        # the definitively settled original failure as the review target.
+        return retry.get("recoverable_failure_output", retry.get("prior_output"))
+    return output
+
+
+def _retry_task(tx, mission, task_id=None):
+    task_id = task_id or (mission.get("blocker") or {}).get("task_id")
+    if task_id:
+        return tx.get("agent_task", task_id)
+    candidates = []
+    for task in tx.list("agent_task"):
+        if task.get("mission_id") != mission["id"] or task.get("status") == "COMPLETED":
+            continue
+        for trace_id in _output_traces(tx, _retry_failure_output(tx, task)):
+            trace = tx.get("ai_trace", trace_id) or {}
+            if trace.get("task_id") == task["id"] and trace.get("error_code") in RECOVERABLE_AI_CODES:
+                candidates.append(task)
+                break
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _retry_candidate(tx, mission, task_id=None, trace_id=None):
+    if (not _v13(mission) or type(mission.get("deadline_at")) not in {int, float}
+            or not math.isfinite(mission["deadline_at"])):
+        raise PolicyError("mission_retry_deadline_required", "Återförsök kräver den stödda uppdragsgrafen och en redan sparad giltig tidsgräns; äldre uppdrag får ingen ny tidsbudget.")
+    if mission.get("status") not in {"REVIEW_REQUIRED", "PAUSED"}:
+        raise PolicyError("mission_retry_state", "Endast pausade uppdrag eller uppdrag som kräver granskning kan få ett nytt försök.")
+    if _uncertain(tx, mission):
+        raise PolicyError("mission_reconciliation_required", "Okända leverantörsutfall måste stämmas av; ett nytt försök får inte kringgå reservationen.")
+    if ((mission.get("blocker") or {}).get("code") == "administrator_rejected"
+            or any(action.get("mission_id") == mission["id"] and action.get("status") == "REJECTED" for action in tx.list("agent_action"))):
+        raise PolicyError("mission_retry_rejected", "Ett avvisat uppdrag kan inte återupptas genom ett nytt försök.")
+    task = _retry_task(tx, mission, task_id)
+    if not task or task.get("mission_id") != mission["id"] or task.get("status") == "COMPLETED":
+        raise PolicyError("mission_retry_unavailable", "Det finns inget identifierat misslyckat AI-steg att återuppta.")
+    if task.get("status") not in {"REVIEW_REQUIRED", "PAUSED", "BLOCKED", "FAILED"}:
+        raise PolicyError("mission_retry_pending", "Delsteget har redan ett köat eller pågående försök.")
+    references = _output_traces(tx, _retry_failure_output(tx, task))
+    if trace_id is None:
+        if len(references) != 1:
+            raise PolicyError("mission_retry_unavailable", "Välj den exakta misslyckade spårningsposten före ett nytt försök.")
+        trace_id = next(iter(references))
+    trace = tx.get("ai_trace", trace_id)
+    if (trace_id not in references or not trace or trace.get("mission_id") != mission["id"]
+            or trace.get("task_id") != task["id"] or trace.get("role") != task["role"]):
+        raise PolicyError("mission_retry_stale", "Spårningsposten tillhör inte delstegets aktuella misslyckade försök.")
+    if trace.get("status") != "REVIEW_REQUIRED" or trace.get("error_code") not in RECOVERABLE_AI_CODES:
+        raise PolicyError("mission_retry_unsafe", "Endast bekräftat avkortad eller felaktigt formaterad utdata kan få ett nytt försök. Policyfel får inte kringgås.")
+    entry = tx.get("budget_entry", trace.get("reservation_id", ""))
+    if not entry or entry.get("state") != "SETTLED":
+        raise PolicyError("mission_reconciliation_required", "Den tidigare kostnaden måste vara definitivt bokförd före ett nytt försök.")
+    own_jobs = [job for job in tx.list("job") if job.get("payload", {}).get("mission_id") == mission["id"]]
+    if any(job.get("status") in jobs.ACTIVE for job in own_jobs):
+        raise PolicyError("mission_retry_pending", "Uppdraget har redan köat eller pågående arbete.")
+    previous = [item for item in tx.list("mission_retry") if item.get("task_id") == task["id"]]
+    if len(previous) >= MAX_STEP_RECOVERIES:
+        raise PolicyError("mission_retry_limit", "Delstegets två uttryckligen godkända återförsök är förbrukade. Fortsatt automatisk återhämtning är spärrad.")
+    if any((tx.get("agent_task", dependency) or {}).get("status") != "COMPLETED" for dependency in task["dependencies"]):
+        raise PolicyError("agent_dependency_pending", "Delstegets beständiga förutsättningar är inte färdiga.")
+    return task, trace, previous
+
+
+def _retry_checks(tx, mission, task, previous_trace):
+    policy.guard(tx, "job", actor="mission-recovery")
+    policy.guard(tx, "llm", actor="mission-recovery")
+    _deadline(tx, mission)
+    _retry_sources(tx, mission)
+    _allowed(tx, task["role"], {"lead_research": "approved_research", "sales": "sales_draft",
+        "delivery": "service_factory", "finance": "budget_read", "compliance": "policy_review"}.get(
+            task["role"], "plan" if task["step"] == "plan" else "summarize"))
+    reviewed = ai.retry_preflight(tx, task["role"])
+    ai.require_retry_revision_approval(tx, previous_trace.get("config_revision") if previous_trace else None)
+    guard_ai_budget(tx, task["role"], reviewed["reservation_sek_minor"], mission["id"], _reviewed_retry=True)
+    previous_schedule = getattr(tx, "schedule_context", None)
+    try:
+        if mission.get("schedule_id"):
+            from . import operations
+            tx.schedule_context = {field: mission[field] for field in SCHEDULE_FIELDS if field in mission}
+            operations.guard_scheduled(tx, reviewed["reservation_sek_minor"])
+    finally:
+        tx.schedule_context = previous_schedule
+    if task["role"] == "lead_research":
+        # Recovery reuses the already approved source snapshot. It never pays
+        # for another source fetch just because a response was truncated.
+        from . import intelligence, research
+        for source_id in mission.get("source_ids", []):
+            present = bool(research.documents(tx, [source_id])) or any(
+                intelligence.verified_citations(tx, lead, [source_id]) for lead in tx.list("lead"))
+            if not present:
+                raise PolicyError("retry_source_data_required", "Importera aktuellt godkänt underlag för varje källa separat; ett nytt AI-försök tillåter ingen ny nätverkshämtning.")
+    return reviewed
+
+
+def guard_retry_dispatch(tx):
+    """Fresh after every provider checkpoint; no duplicate reserve is counted."""
+    context = getattr(tx, "agent_context", None) or {}
+    if not context.get("retry_id"):
+        return
+    retry = tx.get("mission_retry", context["retry_id"])
+    mission = tx.get("business_mission", context.get("mission_id", ""))
+    task = tx.get("agent_task", context.get("task_id", ""))
+    if (not retry or not mission or not task or retry.get("task_id") != task["id"]
+            or retry.get("job_id") != task.get("job_id") or task.get("retry_id") != retry["id"]
+            or context.get("retry_of_trace_id") != retry.get("previous_trace_id")
+            or mission.get("status") not in {"QUEUED", "RUNNING"}):
+        raise PolicyError("mission_retry_invalid", "Det granskade återförsöket är inte längre aktivt.")
+    policy.guard(tx, "job", actor="mission-recovery")
+    _deadline(tx, mission)
+    current = ai.effective_config(tx, task["role"])
+    previous_trace = tx.get("ai_trace", retry["previous_trace_id"])
+    ai.require_retry_revision_approval(tx, previous_trace.get("config_revision") if previous_trace else None)
+    if (current.get("revision") != retry.get("config_revision")
+            or current.get("max_output_tokens") != retry.get("max_output_tokens")
+            or _config(tx, task["role"]).get("revision") != retry.get("agent_config_revision")
+            or policy.get_settings(tx).get("safety_epoch", 0) != retry.get("safety_epoch")):
+        raise PolicyError("mission_retry_authorization_changed", "Modell, rollgränser eller betald behörighet har ändrats efter godkännandet. Ny granskning krävs.")
+    if mission.get("deadline_at") != retry.get("mission_deadline_at"):
+        raise PolicyError("mission_deadline", "Uppdragets tidsgräns har ändrats efter granskningen; ett nytt försök får inte förlänga tidsbudgeten.")
+    _retry_sources(tx, mission)
+    if _quality_snapshot(tx, mission) != retry.get("source_snapshot"):
+        raise PolicyError("retry_source_changed", "Tidigare resultat eller källunderlag har ändrats efter godkännandet. Återförsöket stoppades.")
+
+
+def _retry_view(tx, retry):
+    traces = [trace for trace in tx.list("ai_trace") if trace.get("retry_id") == retry["id"]]
+    reservation_ids = {trace.get("reservation_id") for trace in traces}
+    entries = [entry for entry in tx.list("budget_entry") if entry["id"] in reservation_ids]
+    # Raw failed candidates and prior outputs remain private retained records;
+    # the default mission UI gets only cost/usage/status and ancestry.
+    names = ("id", "mission_id", "task_id", "role", "previous_trace_id", "attempt", "status", "created_at",
+             "started_at", "finished_at", "model", "max_output_tokens", "timeout_seconds", "config_revision", "job_id", "error_code")
+    value = {name: retry[name] for name in names if name in retry}
+    job = tx.get("job", retry.get("job_id", "")) or {}
+    task = tx.get("agent_task", retry["task_id"]) or {}
+    if retry.get("status") in {"QUEUED", "RUNNING"}:
+        if job.get("status") == "uncertain" or task.get("uncertain_outcome"):
+            value["status"] = "REVIEW_REQUIRED"
+            value["error_code"] = "mission_reconciliation_required"
+        elif job.get("status") in {"paused", "failed", "cancelled"}:
+            value["status"] = {"paused": "PAUSED", "failed": "FAILED", "cancelled": "CANCELLED"}[job["status"]]
+            value["error_code"] = task.get("error_code") or job.get("error_code") or job.get("paused_reason")
+        elif job.get("status") == "leased":
+            value["status"] = "RUNNING"
+    return {**value,
+            "trace_ids": [trace["id"] for trace in traces],
+            "reserved_cost_minor": sum(_amount(entry) for entry in entries if entry.get("state") == "RESERVED"),
+            "additional_cost_minor": sum(_amount(entry) for entry in entries if entry.get("state") in {"SETTLED", "ACTUAL"}),
+            "input_tokens": sum(int(trace.get("input_tokens", 0)) for trace in traces),
+            "output_tokens": sum(int(trace.get("output_tokens", 0)) for trace in traces)}
+
+
+def mission_recovery(tx, mission):
+    records = [_retry_view(tx, item) for item in tx.list("mission_retry") if item.get("mission_id") == mission["id"]]
+    active = next((item for item in records if item["id"] == mission.get("active_retry_id")), None)
+    task = _retry_task(tx, mission)
+    trace = None
+    references = _output_traces(tx, _retry_failure_output(tx, task)) if task else set()
+    if len(references) == 1:
+        trace = tx.get("ai_trace", next(iter(references)))
+    blocker = None
+    try:
+        task, trace, _ = _retry_candidate(tx, mission)
+        _retry_checks(tx, mission, task, trace)
+    except PolicyError as error:
+        blocker = {"code": error.code, "message": error.message}
+    return {"eligible": blocker is None, "blocker": blocker,
+        "failed_task_id": task["id"] if task else (mission.get("blocker") or {}).get("task_id"),
+        "failed_trace_id": trace["id"] if trace else None,
+        "attempts_used": sum(item.get("task_id") == ((task or {}).get("id") or (active or {}).get("task_id")) for item in records),
+        "max_attempts": MAX_STEP_RECOVERIES, "active_retry": active, "retries": records,
+        "additional_cost_minor": sum(item["additional_cost_minor"] for item in records),
+        "total_input_tokens": sum(item["input_tokens"] for item in records),
+        "total_output_tokens": sum(item["output_tokens"] for item in records)}
+
+
+def retry_failed_step(tx, mission_id, actor, reason, idempotency_key, *, expected_task_id, expected_trace_id):
+    """Explicit, serialized authorization for one new bounded step attempt.
+
+    Completed tasks and every previous job/result/trace remain unchanged. The
+    optimistic task/trace pair rejects two different keys for the same failure;
+    replaying the same key returns the same durable attempt after any restart.
+    """
+    policy.require_admin(actor)
+    reason = _reason(reason)
+    request = {"mission_id": mission_id, "task_id": expected_task_id, "trace_id": expected_trace_id,
+               "reason": reason, "actor": policy.actor_id(actor)}
+    previous = tx.idempotency_get("engine.retry_failed_step", idempotency_key, request)
+    mission = tx.get("business_mission", mission_id)
+    if not mission:
+        raise PolicyError("mission_not_found", "Uppdraget finns inte", 404)
+    if previous:
+        return {**_mission_view(tx, mission), "retry_id": previous["retry_id"], "idempotent": True}
+    task, trace, history = _retry_candidate(tx, mission, expected_task_id, expected_trace_id)
+    reviewed = _retry_checks(tx, mission, task, trace)
+    retry_id = fingerprint({"mission_id": mission_id, "task_id": task["id"], "previous_trace_id": trace["id"],
+                            "attempt": len(history) + 1})
+    retry = tx.create("mission_retry", {"mission_id": mission_id, "task_id": task["id"], "role": task["role"],
+        "previous_trace_id": trace["id"], "prior_output": task.get("output"), "prior_job_id": task.get("job_id"),
+        "recoverable_failure_output": _retry_failure_output(tx, task),
+        "prior_error_code": task.get("error_code"), "attempt": len(history) + 1,
+        "status": "QUEUED", "trace_ids": [], "requested_by": policy.actor_id(actor), "reason": reason,
+        "safety_epoch": policy.get_settings(tx).get("safety_epoch", 0), **reviewed,
+        "mission_deadline_at": mission["deadline_at"],
+        "reserved_cost_minor": reviewed["reservation_sek_minor"], "additional_cost_minor": 0,
+        "input_tokens": 0, "output_tokens": 0,
+        "source_snapshot": _quality_snapshot(tx, mission),
+        "agent_config_revision": _config(tx, task["role"]).get("revision")}, id=retry_id)
+    task.update(status="QUEUED", error_code=None, request_key="agent-retry:" + retry_id,
+                retry_id=retry_id, job_id=None)
+    _enqueue(tx, mission, task)
+    retry["job_id"] = task["job_id"]
+    tx.put("mission_retry", retry_id, retry)
+    # Only untouched downstream work is made pending again. Its original job
+    # and request identities are retained; no completed step is changed.
+    for pending in tx.list("agent_task"):
+        if (pending.get("mission_id") == mission_id and pending["id"] != task["id"]
+                and pending.get("status") in {"PAUSED", "BLOCKED"} and not pending.get("output")):
+            pending.update(status="QUEUED", error_code=None)
+            if pending.get("job_id"):
+                pending["recovery_resume_pending"] = True
+            _save(tx, "agent_task", pending)
+    mission.update(status="RUNNING", blocker=None, active_retry_id=retry_id,
+                   last_retry_at=tx.now, last_retry_reason=reason, retry_reviewed_by=policy.actor_id(actor))
+    _save(tx, "business_mission", mission)
+    tx.idempotency_put("engine.retry_failed_step", idempotency_key, request, {"retry_id": retry_id})
+    tx.audit(actor, "mission.retry_authorized", {"mission_id": mission_id, "task_id": task["id"],
+        "retry_id": retry_id, "previous_trace_id": trace["id"], "config_revision": reviewed["config_revision"],
+        "reviewed_max_output_tokens": reviewed["max_output_tokens"], "reason": reason,
+        "previous_costs_retained": True, "completed_steps_replayed": False})
+    return {**_mission_view(tx, mission), "retry_id": retry_id, "idempotent": False}
+
+
 def resume_mission(tx, mission_id, actor, reason):
     """Resume the same requests after review; never mint replacement AI keys."""
     policy.require_admin(actor)
@@ -993,6 +1334,7 @@ def mission_detail(tx, mission_id):
               or row.get("details", {}).get("job_id") in ids]
     events.sort(key=lambda row: row.get("created_at", 0))
     return {"mission": _mission_view(tx, mission), "tasks": tasks, "jobs": own_jobs,
+            "recovery": mission_recovery(tx, mission),
             "timeline": events, "ai_traces": [trace for trace in tx.list("ai_trace") if trace.get("mission_id") == mission_id],
             "budget_entries": [entry for entry in tx.list("budget_entry") if entry.get("mission_id") == mission_id
                 or str(entry.get("workflow_id", "")).startswith("mission:" + mission_id + ":")],

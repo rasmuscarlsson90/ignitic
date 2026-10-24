@@ -2,7 +2,7 @@
 
 (() => {
   const byId = (id) => document.getElementById(id);
-  const state = { user: null, csrf: null, data: null, v12: null, crm: null, crmQuery: null, refreshing: false, toastTimer: null, detailCache: {}, detailLoading: null, detailGeneration: 0 };
+  const state = { user: null, csrf: null, data: null, v12: null, crm: null, crmQuery: null, refreshing: false, toastTimer: null, detailCache: {}, detailLoading: null, detailGeneration: 0, missionRetryRequests: {} };
   const money = new Intl.NumberFormat("sv-SE", { style: "currency", currency: "SEK", minimumFractionDigits: 0, maximumFractionDigits: 2 });
   const integer = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 0 });
   const dateFormat = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Stockholm", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -20,11 +20,20 @@
     DRAFT: "Utkast", APPROVED: "Godkänd", REQUESTED: "Begäran skapad", INITIATED: "Betalning inledd",
     CONFIRMED: "Betalning bekräftad", SENT: "Skickad", DELIVERED: "Levererad", PENDING: "Väntar", DONE: "Klar",
     RESOLVED: "Granskad", SUPERSEDED: "Sammanförd", BLOCKED: "Spärrad", REVIEW_REQUIRED: "Kräver granskning",
-    IDLE: "Ledig", WORKING: "Arbetar", ERROR: "Fel / granskas", BUSY: "Arbetar", WAITING: "Väntar", READY: "Redo", TEST_ARTIFACT: "Äldre testartefakt",
+    IDLE: "Ledig", WORKING: "Arbetar", ERROR: "Fel / granskas", BUSY: "Arbetar", WAITING: "Väntar", READY: "Redo", UNDISPATCHED: "Ej skickat", TEST_ARTIFACT: "Äldre testartefakt",
     APPROVED_INTERNAL: "Internt granskad · oskickad", NEEDS_REVIEW: "Behöver granskas", QUALITY_REVIEW: "Kvalitetsgranskning"
   };
   const jobNames = { demo_journey: "Simulerad kundresa", research: "Leadanalys", qualify: "Kvalificering", follow_up: "Uppföljning", daily_report: "Daglig rapport", pipeline_advance: "Förbered nästa affärssteg", source_research: "Granska tillåten researchkälla" };
   const errorNames = {
+    ai_runtime_disabled: "Servern tillåter inte betalda AI-anrop. Ett administratörsbeslut kan inte ändra serverns säkerhetsgräns.",
+    ai_admin_disabled: "Betalda interna AI-anrop är spärrade av en administratör. Separat godkännande krävs innan arbetet kan fortsätta.",
+    ai_activation_required: "Ett nytt administratörsgodkännande krävs för den aktuella modellrevisionen innan ett återförsök kan kosta pengar.",
+    mission_retry_authorization_changed: "Modellinställningar eller behörigheter har ändrats sedan återförsöket granskades. Granska aktuella inställningar och godkännanden igen.",
+    retry_source_changed: "Källunderlaget eller dess tillstånd har ändrats. Tidigare källgodkännande kan inte användas för detta återförsök.",
+    mission_deadline: "Uppdragets tidsgräns har passerat. Återupptagning får inte förlänga den eller starta nya AI-anrop.",
+    mission_retry_limit: "Gränsen för granskade återförsök är nådd. Fler försök får inte skapas inom detta uppdrag.",
+    mission_reconciliation_required: "Anropsutfallet eller kostnaden kräver manuell avstämning. Ett nytt återförsök får inte kringgå ett okänt utfall.",
+    ai_output_truncated: "AI-svaret nådde svarstaket och är ofullständigt. Ingen delvis JSON godkänns. Granska inställningar, budget och nytt AI-godkännande innan samma steg får återförsökas.",
     ai_json_invalid: "AI-svaret gick inte att läsa som fullständig JSON. Det sparade felet kan granskas utan att säkerhetsgränser ändras.",
     ai_schema_invalid: "AI-svaret saknar uppgifter som krävs för detta delsteg. Högst en budgetkontrollerad formatkorrigering tillåts.",
     ai_policy_violation: "AI-svaret föreslog en otillåten handling. Automatisk formatkorrigering kan inte godkänna den.",
@@ -127,6 +136,7 @@
   }
   function showLogin() {
     state.user = null; state.csrf = null; state.data = null; state.v12 = null; state.crm = null; state.crmQuery = null;
+    state.missionRetryRequests = {};
     byId("app-shell").hidden = true;
     byId("login-screen").hidden = false;
     for (const form of document.querySelectorAll(".config-form")) { form.reset(); delete form.dataset.hydrated; delete form.dataset.dirty; }
@@ -221,6 +231,8 @@
       ["Modell", first(aiConfig.model, "Ej konfigurerad")],
       ["Servernyckel", ai.key_configured ? "Konfigurerad · dold" : "Ej konfigurerad"],
       ["Kostnadstak per anrop", amount(aiConfig.per_call_limit_sek_minor)],
+      ["Globalt svarstak", integer.format(number(aiConfig.max_output_tokens)) + " token · roller kan ha lägre tak"],
+      ["Timeout per leverantörsanrop", number(aiConfig.timeout_seconds) + " sekunder"],
       ["Runtime-tillstånd", ai.readiness?.runtime === true ? "Tillåtet på servern · inget administratörsbeslut" : "Serverns kostnadsspärr gäller"],
       ["Administratörsbeslut", ai.readiness?.administrator === true ? "Aktuellt godkännande registrerat" : "Separat godkännande saknas eller behöver förnyas"],
       ["Modellrevision", first(ai.config_revision, aiConfig.revision, "Ej granskad")],
@@ -231,6 +243,9 @@
     if (!traceBox) { traceBox = el("div"); traceBox.id = "ai-last-trace"; byId("ai-summary").after(traceBox); }
     traceBox.replaceChildren(ai.last_trace ? resultDetails("Senaste registrerade AI-anrop · status, token och kostnad", ai.last_trace) : el("p", "muted small", "Inga AI-anrop registrerade ännu."));
     hydrateConfig("ai-config-form", { "ai-model": first(aiConfig.model, "openai/gpt-4o-mini"), "ai-call-sek": number(first(aiConfig.per_call_limit_sek_minor, 200)) / 100, "ai-max-tokens": first(aiConfig.max_output_tokens, 512), "ai-timeout": first(aiConfig.timeout_seconds, 20), "ai-retries": first(aiConfig.max_retries, 1) });
+    const supportedTimeout = Math.min(20, number(ai.timeout_policy?.max_supported_seconds, 20));
+    byId("ai-timeout").max = supportedTimeout;
+    text("ai-timeout-policy", first(ai.timeout_policy?.message, ai.timeout_policy?.reason, "Stödd timeout är högst " + supportedTimeout + " sekunder per leverantörsanrop. Upp till 120 sekunder är inte verifierat för worker och hosting. Ett eventuellt separat formatkorrigeringsanrop har sin egen begränsade tidsram."));
     const pipeline = v.pipeline || {};
     text("pipeline-state", pipeline.requires_reauthorization ? "Kräver ny granskning" : pipeline.enabled ? "Förberedelser schemalagda" : "Schema avstängt");
     byId("pipeline-state").className = "badge badge-" + (pipeline.requires_reauthorization ? "warning" : pipeline.enabled ? "success" : "neutral");
@@ -273,16 +288,16 @@
     const contactEnabled = false;
     text("contact-gate-badge", contactEnabled ? "Separat kontaktgodkännande finns" : "Kundkontakt spärrad");
     byId("contact-gate-badge").className = "badge badge-" + (contactEnabled ? "warning" : "neutral");
-    text("outreach-state", "Spärrad i v1.3");
+    text("outreach-state", "Spärrad i v1.4");
     summaryRows("outreach-summary", [
       ["Leverantör", first(outreach.provider, outreach.config?.provider, "Brevo · kräver granskning")],
       ["Domänunderlag", checks.reviewed_domain_evidence === true ? "Operatörsgranskat underlag registrerat" : "Operatörsgranskning krävs"],
       ["Avsändare & juridisk policy", checks.reviewed_sender_and_lawful_policy === true ? "Granskningsreferens registrerad" : "Ej godkänd"],
       ["Testomfattning", outreach.test_scope === "isolated_offline_safety_probe" ? "Isolerad offlinekontroll · inte leveranstest" : "Separat testunderlag krävs"],
-      ["Serverns kontaktspärr", "Permanent spärrad i v1.3"],
-      ["Betalningsåtgärder", "Permanent spärrade i v1.3 · historik bevaras"]
+      ["Serverns kontaktspärr", "Permanent spärrad i v1.4"],
+      ["Betalningsåtgärder", "Permanent spärrade i v1.4 · historik bevaras"]
     ]);
-    text("preparation-status", "Godkända källor, verkliga leads och interna AI-utkast kan förberedas. Verkliga kundutskick och betalningar är spärrade i v1.3, även om äldre runtime-inställningar finns.");
+    text("preparation-status", "Godkända källor, verkliga leads och interna AI-utkast kan förberedas. Verkliga kundutskick och betalningar är spärrade i v1.4, även om äldre runtime-inställningar finns.");
     byId("preparation").classList.toggle("version-unavailable", !data.v11);
   }
 
@@ -431,7 +446,7 @@
     for (const payment of pending.slice(0, 4)) {
       const card = el("div", "approval-item");
       const detail = el("div");
-      detail.append(el("strong", "", payment.provider === "demo" ? "Godkänn simulerad betalningsbegäran" : "Historiskt betalningsbeslut · spärrat i v1.3"), el("p", "", first(payment.reference, payment.customer_name, payment.id.slice(0, 8)) + " · " + amount(payment.total_minor ?? payment.amount_minor) + " inkl. moms"));
+      detail.append(el("strong", "", payment.provider === "demo" ? "Godkänn simulerad betalningsbegäran" : "Historiskt betalningsbeslut · spärrat i v1.4"), el("p", "", first(payment.reference, payment.customer_name, payment.id.slice(0, 8)) + " · " + amount(payment.total_minor ?? payment.amount_minor) + " inkl. moms"));
       card.append(detail, paymentButton(payment, "approve"));
       box.append(card);
     }
@@ -444,7 +459,7 @@
     }
   }
   function paymentButton(payment, action) {
-    if (payment.provider !== "demo") return el("span", "muted small", "Betalningsåtgärder spärrade i v1.3");
+    if (payment.provider !== "demo") return el("span", "muted small", "Betalningsåtgärder spärrade i v1.4");
     const options = { disabled: !isAdmin() || isKilled(), primary: action === "approve" };
     if (action === "approve") return actionButton("Godkänn", async (button) => {
       const label = amount(first(payment.total_minor, payment.amount_minor));
@@ -603,7 +618,7 @@
     const connectionBox = byId("connections-list");
     connectionBox.replaceChildren();
     const connections = data.connections || {};
-    const connectionRows = [["Databas", first(connections.database, "Beständig databas")], ["Jobbkö", first(connections.queue, "Databasbaserad")], ["AI-leverantör", aiStatus().effective_paid_enabled ? "OpenRouter · separat godkända betalda interna anrop" : "Betalda interna anrop spärrade · se AI-kontroller"], ["E-post", "Verkliga utskick spärrade i v1.3"], ["Betalningar", "Verkliga betalningsåtgärder spärrade i v1.3"], ["Din behörighet", roleNames[state.user?.role] || state.user?.role || "—"]];
+    const connectionRows = [["Databas", first(connections.database, "Beständig databas")], ["Jobbkö", first(connections.queue, "Databasbaserad")], ["AI-leverantör", aiStatus().effective_paid_enabled ? "OpenRouter · separat godkända betalda interna anrop" : "Betalda interna anrop spärrade · se AI-kontroller"], ["E-post", "Verkliga utskick spärrade i v1.4"], ["Betalningar", "Verkliga betalningsåtgärder spärrade i v1.4"], ["Din behörighet", roleNames[state.user?.role] || state.user?.role || "—"]];
     for (const [label, value] of connectionRows) {
       const safeValue = typeof value === "boolean" ? value ? "Konfigurerad" : "Ej konfigurerad" : typeof value === "object" ? first(value.status, value.mode, value.configured ? "Konfigurerad" : "Ej konfigurerad") : value;
       connectionBox.append(el("dt", "", label), el("dd", "", safeValue));
@@ -654,7 +669,7 @@
   function renderEngine() {
     const v = state.v12;
     for (const section of document.querySelectorAll(".v12-section")) section.classList.toggle("version-unavailable", !v);
-    text("engine-status", v ? "Databasregistrerad aktivitet" : "v1.3-API saknas");
+    text("engine-status", v ? "Databasregistrerad aktivitet" : "v1.4-API saknas");
     if (!v) return;
     const metrics = v.metrics || {}, totals = metrics.totals || metrics;
     const metricsBox = byId("engine-metrics"); metricsBox.replaceChildren();
@@ -778,6 +793,10 @@
       const settings = el("details", "admin-settings"); settings.open = expandedRoles.has(roleId); settings.append(el("summary", "", "Konfigurera intern roll")); const form = el("form", "config-form agent-config-form");
       form.dataset.role = roleId;
       for (const [name, label, minimum, maximum, fallback] of [["priority", "Prioritet · lägre tal först", 0, 100, 50], ["per_call_limit_minor", "Kostnadstak per anrop, öre", 1, 50000, 200], ["daily_budget_minor", "Dygnsbudget, öre", 0, 50000, 10000], ["max_calls_per_day", "Högst AI-anrop per dygn", 1, 100, 30]]) { const caption = el("label", "", label); const input = el("input"); input.name = name; input.type = "number"; input.min = minimum; input.max = maximum; input.required = true; input.value = first(role.config?.[name], role[name], fallback); input.disabled = !isAdmin(); form.append(caption, input); }
+      const globalTokens = number(aiStatus().config?.max_output_tokens, 512), roleTokens = first(role.config?.max_output_tokens, role.max_output_tokens);
+      const tokenLabel = el("label", "", "Högst svarstoken för rollen · tomt ärver globalt tak"), tokenInput = el("input");
+      tokenInput.name = "max_output_tokens"; tokenInput.type = "number"; tokenInput.min = 1; tokenInput.max = globalTokens; tokenInput.step = 1; tokenInput.placeholder = "Ärv globalt: " + globalTokens; tokenInput.value = roleTokens === undefined ? "" : roleTokens; tokenInput.disabled = !isAdmin();
+      form.append(tokenLabel, tokenInput, el("p", "footnote", "Nu effektivt svarstak: " + Math.min(number(roleTokens, globalTokens), globalTokens) + " token. Ett granskat rolltak får aldrig överstiga globalt tak (" + globalTokens + "). Kostnadsgränser och separat godkännande gäller fortfarande."));
       const reasonLabel = el("label", "", "Granskningsanteckning"); const reason = el("input"); reason.name = "reason"; reason.minLength = 12; reason.maxLength = 500; reason.required = true;
       form.append(el("p", "footnote", "Tillåtna interna verktyg · endast serverns rollspecifika lista"));
       for (const tool of list(role.allowlisted_tools)) { const caption = el("label", "checkbox-label"); const input = el("input"); input.type = "checkbox"; input.name = "tools"; input.value = tool; input.checked = list(role.config?.tools || role.tools).includes(tool); input.disabled = !isAdmin(); caption.append(input, document.createTextNode(tool)); form.append(caption); }
@@ -837,7 +856,7 @@
     try {
       const data = await api("/api/dashboard");
       if (!data.v12) {
-        try { state.v12 = await api("/api/v1.3/overview"); }
+        try { state.v12 = await api("/api/v1.4/overview"); }
         catch (error) { if (!state.user) throw error; state.v12 = null; }
       }
       if (state.crmQuery) state.crm = await api("/api/crm/leads?" + state.crmQuery);
@@ -975,11 +994,12 @@
     const form = event.target.closest(".agent-config-form"); if (!form) return;
     event.preventDefault(); const fields = new FormData(form), payload = { enabled: fields.get("enabled") === "on", reason: fields.get("reason"), tools: fields.getAll("tools") };
     for (const name of ["priority", "per_call_limit_minor", "daily_budget_minor", "max_calls_per_day"]) payload[name] = Number(fields.get(name));
+    payload.max_output_tokens = String(fields.get("max_output_tokens") || "").trim() === "" ? null : Number(fields.get("max_output_tokens"));
     const result = await mutate(form.querySelector("button"), "/api/agents/" + encodeURIComponent(form.dataset.role) + "/config", payload, "Rollens interna begränsningar är sparade. Inga externa befogenheter har lagts till.");
     if (result) { delete form.dataset.dirty; document.activeElement.blur(); renderAgents(state.v12?.agents || {}); renderAgentViews(); }
   });
   byId("agents-refresh").addEventListener("click", refresh);
-  // v1.3: one addressable workspace view at a time. All counters use persisted data.
+  // v1.4: one addressable workspace view at a time. All counters use persisted data.
   const navigation = {
     overview: { title: "Översikt", base: "/", tabs: [] },
     agents: { title: "AI-agenter", base: "/agents", tabs: [["overview", "Översikt"], ["workflows", "Arbetsflöden"], ["activity", "Aktivitet"], ["history", "Historik"]] },
@@ -1053,7 +1073,16 @@
   function statCard(label, value, detail, monetary = false) { const card = el("article", "stat-card"); card.append(el("span", "stat-label", label), el("strong", "stat-value", value === undefined || value === null ? "—" : monetary ? amount(value) : value), el("span", "stat-note", detail || "Från beständiga backenddata")); return card; }
   function latest(records) { return [...list(records)].sort((a, b) => number(first(b.updated_at, b.created_at)) - number(first(a.updated_at, a.created_at))); }
   function missionRecords() { return list(state.v12?.agents?.missions); }
-  function currentTasks(id) { return list(state.v12?.agents?.tasks).filter((task) => task.mission_id === id); }
+  function orderedMissionTasks(tasks) {
+    const remaining = new Map(list(tasks).map((task) => [task.id, task])), ordered = [];
+    while (remaining.size) {
+      const ready = [...remaining.values()].filter((task) => list(task.dependencies).every((id) => !remaining.has(id)));
+      if (!ready.length) { ordered.push(...remaining.values()); break; }
+      for (const task of ready) { ordered.push(task); remaining.delete(task.id); }
+    }
+    return ordered;
+  }
+  function currentTasks(id) { return orderedMissionTasks(list(state.v12?.agents?.tasks).filter((task) => task.mission_id === id)); }
   function resultRecords() { const rows = [...list(state.v12?.services?.results), ...list(state.v12?.reports?.summaries).map((row) => ({ ...row, kind: row.kind || "mission_summary", responsible_agent: "ceo", version: row.version || 1 })), ...Object.values(state.detailCache || {}).filter((row) => row?.id && row?.content)]; return [...new Map(rows.map((row) => [row.id, row])).values()]; }
   function taskOutput(task) { return first(task.output?.output?.text, task.output?.analysis, task.output?.content, task.output?.output, task.output, task.result); }
   function missionState(mission) { return String(first(mission.status, mission.state, "QUEUED")).toUpperCase(); }
@@ -1087,11 +1116,11 @@
       for (const mission of rows) { const row = el("article", "mission-list-row"); const title = el("div", "mission-list-title"); title.append(routeLink(mission.goal, "/missions/" + encodeURIComponent(mission.id), "row-title"), el("span", "row-meta", date(mission.created_at) + " · " + mission.id.slice(0, 8))); const progress = currentTasks(mission.id); const done = progress.filter((task) => asStatus(task) === "COMPLETED").length; const meta = el("div", "mission-list-meta"); meta.append(badge(missionState(mission)), el("span", "muted small", done + " / " + progress.length + " registrerade steg"), el("strong", "small", amount(mission.actual_and_pending_cost_minor))); row.append(title, meta); if (mission.blocker?.message) row.append(el("p", "blocker-note", mission.blocker.message)); target.append(row); }
     }
   }
-  function missionControls(mission) {
+  function missionControls(mission, recovery) {
     const actions = el("div", "button-row"), status = missionState(mission);
     if (["QUEUED", "RUNNING", "PAUSED", "REVIEW_REQUIRED", "BLOCKED", "FAILED"].includes(status)) {
       const action = ["QUEUED", "RUNNING"].includes(status) ? "pause" : "resume";
-      if (status !== "REVIEW_REQUIRED") actions.append(actionButton(action === "pause" ? "Pausa uppdrag" : "Granska & återuppta", (button) => missionAction(button, mission, action), { disabled: !isAdmin() || mission.uncertain_outcome || action === "resume" && isKilled() }));
+      if (status !== "REVIEW_REQUIRED" && !(action === "resume" && (!recovery || recovery.failed_task_id))) actions.append(actionButton(action === "pause" ? "Pausa uppdrag" : "Granska & återuppta", (button) => missionAction(button, mission, action), { disabled: !isAdmin() || mission.uncertain_outcome || action === "resume" && isKilled() }));
       actions.append(actionButton("Avbryt uppdrag", (button) => missionAction(button, mission, "cancel"), { disabled: !isAdmin() || mission.uncertain_outcome }));
     }
     const proposal = list(state.v12?.agents?.proposals).find((p) => p.mission_id === mission.id && asStatus(p) === "PENDING");
@@ -1099,16 +1128,102 @@
     return actions;
   }
   async function missionAction(button, mission, action) { const reason = window.prompt(({ pause: "Varför pausar du detta uppdrag?", resume: "Vad har granskats innan samma uppdrag får återupptas?", cancel: "Varför ska uppdraget avbrytas? Redan uppkomna kostnader bevaras." })[action], ""); if (!reason || reason.trim().length < 12) return; await mutate(button, "/api/missions/" + encodeURIComponent(mission.id) + "/" + action, { reason: reason.trim() }, action === "cancel" ? "Uppdraget är avbrutet. Historik och kostnader bevaras." : action === "pause" ? "Uppdraget är pausat." : "Återupptagningen har granskats."); }
+  function retryRequest(mission, recovery) {
+    if (!recovery?.failed_task_id || !recovery.failed_trace_id) return null;
+    const identity = [first(state.user?.id, state.user?.email, "session"), mission.id, recovery.failed_task_id, recovery.failed_trace_id, number(recovery.attempts_used)].join(":");
+    if (!state.missionRetryRequests[identity]) {
+      let retained = null;
+      try { retained = JSON.parse(sessionStorage.getItem("jarvis-mission-retry:" + identity) || "null"); } catch { /* Memory still retains the key when storage is unavailable. */ }
+      const matches = retained?.payload?.expected_task_id === recovery.failed_task_id && retained?.payload?.expected_trace_id === recovery.failed_trace_id && typeof retained.payload.idempotency_key === "string" && typeof retained.payload.reason === "string";
+      state.missionRetryRequests[identity] = { identity, payload: matches ? retained.payload : null, busy: false, submitted: matches && retained.submitted === true, error: null };
+    }
+    return state.missionRetryRequests[identity];
+  }
+  function retainRetryRequest(request) {
+    try { sessionStorage.setItem("jarvis-mission-retry:" + request.identity, JSON.stringify({ payload: request.payload, submitted: request.submitted })); } catch { /* Backend idempotency and expected trace remain authoritative. */ }
+  }
+  async function retryFailedStep(button, mission, recovery) {
+    const request = retryRequest(mission, recovery);
+    if (!isAdmin() || isKilled() || !recovery.eligible || !request || request.busy || request.submitted) return;
+    if (!request.payload) {
+      const reason = window.prompt("Granska varför delsteget misslyckades, aktuell modell-/rollgräns, källor, återstående budget och AI-godkännande. Ett nytt anrop kan kosta pengar. Endast detta steg och återstående steg fortsätter i samma uppdrag; färdiga resultat och tidigare kostnader bevaras. Beskriv beslutet med 12–500 tecken.", "");
+      if (!reason || reason.trim().length < 12 || reason.trim().length > 500) return;
+      request.payload = { reason: reason.trim(), idempotency_key: key("mission-step-retry"), expected_task_id: recovery.failed_task_id, expected_trace_id: recovery.failed_trace_id };
+      retainRetryRequest(request);
+    }
+    request.busy = true; request.error = null;
+    setBusy(button, true, "Registrerar återupptagning…");
+    try {
+      await api("/api/missions/" + encodeURIComponent(mission.id) + "/retry-failed-step", { method: "POST", body: request.payload });
+      request.submitted = true; retainRetryRequest(request);
+      toast("Återförsöket är registrerat för samma uppdrag. Färdiga steg körs inte om; servern prövar alla kostnads- och behörighetsspärrar före anropet.");
+      await refresh();
+    } catch (error) {
+      request.error = error.message;
+      showError(error.message); toast(error.message, true);
+      // Retain the exact body/key if the response was lost. A repeat cannot create a second retry.
+    } finally {
+      request.busy = false;
+      setBusy(button, false);
+      if (state.user && state.v12) renderV13();
+    }
+  }
+  function missionRecovery(mission, detail) {
+    const recovery = detail?.recovery;
+    if (!recovery && !["REVIEW_REQUIRED", "PAUSED"].includes(missionState(mission))) return null;
+    if (recovery && !recovery.failed_task_id && !list(recovery.retries).length && !["REVIEW_REQUIRED", "PAUSED"].includes(missionState(mission))) return null;
+    const panel = el("article", "panel mission-recovery"); panel.dataset.missionRecovery = mission.id;
+    const heading = el("div", "panel-heading"); heading.append(el("h2", "", "Säker återupptagning av misslyckat steg"));
+    if (recovery) heading.append(badge(first(recovery.active_retry?.status, recovery.eligible ? "READY" : "BLOCKED")));
+    panel.append(heading, el("p", "muted small", "Endast det bekräftat misslyckade steget får ett nytt försök. Därefter fortsätter uppdragets ofärdiga steg. Färdiga resultat, källor, tidigare anropsspår och kostnader bevaras."));
+    if (!recovery) { panel.append(el("p", "inline-feedback", detail?.error || "Servern kontrollerar om detta delsteg kan återupptas säkert…")); return panel; }
+    if (recovery.blocker && (["REVIEW_REQUIRED", "PAUSED"].includes(missionState(mission)) || !list(recovery.retries).length)) panel.append(el("p", "blocker-note", first(recovery.blocker.message, errorNames[recovery.blocker.code], recovery.blocker.code)));
+    const request = retryRequest(mission, recovery);
+    if (request?.error) panel.append(el("p", "inline-feedback", request.error + " Samma begäransnyckel behålls om beslutet behöver skickas igen."));
+    if (request?.submitted && !list(recovery.retries).length) panel.append(el("p", "inline-feedback", "Beslutet har registrerats. Hämtar serverns aktuella återförsöksstatus…"));
+    const stats = el("div", "detail-stats recovery-stats");
+    stats.append(statCard("Återförsök", number(recovery.attempts_used) + " / " + number(recovery.max_attempts), "Administratörsgranskade försök"), statCard("Tilläggskostnad", recovery.additional_cost_minor, "Bokfört för dessa återförsök · ingår i uppdraget", true), statCard("Token för återförsök", number(recovery.total_input_tokens) + " in / " + number(recovery.total_output_tokens) + " ut", "Rapporterad användning, inte nytt kostnadsmandat"));
+    panel.append(stats);
+    if (recovery.failed_task_id) panel.append(el("p", "row-meta retry-reference", "Misslyckat delsteg: " + recovery.failed_task_id + " · tidigare anropsspår: " + recovery.failed_trace_id));
+    if (isAdmin() && recovery.failed_task_id) {
+      const button = actionButton(request?.payload && !request.submitted ? "Skicka samma återupptagningsbeslut" : "Återuppta från misslyckat steg", (node) => retryFailedStep(node, mission, recovery), { disabled: !request || !recovery.eligible || isKilled() || request.busy || request.submitted });
+      button.dataset.missionRetry = mission.id;
+      if (request?.busy) setBusy(button, true, "Registrerar återupptagning…");
+      panel.append(el("div", "button-row")); panel.lastChild.append(button, routeLink("Granska AI-inställningar & godkännande", "/settings/ai", "button button-quiet"));
+    } else if (!isAdmin() && recovery.failed_task_id) panel.append(el("p", "footnote", "Endast en administratör kan granska och begära ett återförsök."));
+    panel.append(el("p", "footnote", "Aktuellt godkänd modell, rollens svarstak och eventuellt förnyat AI-godkännande krävs. Uppdragets tidsgräns, källrättigheter, nätverksrestriktioner och alla kostnadstak gäller före varje nytt anrop. Ingen ofullständig JSON godkänns."));
+    if (list(recovery.retries).length) {
+      const history = el("div", "retry-history"); history.append(el("h3", "", "Återförsökshistorik"));
+      for (const retry of latest(recovery.retries)) {
+        const row = el("div", "mission-item retry-attempt"), title = el("div", "task-heading");
+        title.append(el("strong", "small", "Återförsök · " + date(retry.created_at)), badge(retry.status)); row.append(title);
+        row.append(el("p", "row-meta", first(retry.model, "Modell granskas före anrop") + " · svarstak " + first(retry.max_output_tokens, "—") + " token · timeout " + first(retry.timeout_seconds, "—") + " s"), el("p", "small", number(retry.input_tokens) + " token in / " + number(retry.output_tokens) + " ut · tillägg bokfört " + amount(retry.additional_cost_minor) + " · reserverat " + amount(retry.reserved_cost_minor)));
+        if (retry.error_code || retry.blocker) row.append(el("p", "blocker-note", first(retry.blocker?.message, errorNames[retry.error_code], retry.error_code)));
+        row.append(el("p", "row-meta retry-reference", "Tidigare spår: " + first(retry.previous_trace_id, "—") + " · nya spår: " + (list(retry.trace_ids).join(", ") || "Ännu inget anrop registrerat")), technicalDetails(retry)); history.append(row);
+      }
+      panel.append(history);
+    }
+    return panel;
+  }
+  function missionTaskUsage(task, traces) {
+    const own = list(traces).filter((trace) => trace.task_id === task.id);
+    if (!own.length) return null;
+    const box = el("div", "task-ai-usage");
+    box.append(el("p", "small", "Registrerade AI-anrop: " + own.length + " · " + own.reduce((sum, trace) => sum + number(trace.input_tokens), 0) + " token in / " + own.reduce((sum, trace) => sum + number(trace.output_tokens), 0) + " ut · bokfört " + amount(own.reduce((sum, trace) => sum + number(trace.actual_sek_minor), 0))));
+    for (const trace of latest(own)) box.append(el("p", "row-meta retry-reference", "Anropsspår " + trace.id + " · " + statusLabel(trace.status) + (trace.max_output_tokens ? " · svarstak " + trace.max_output_tokens + " token" : "") + (trace.finish_reason ? " · " + first({ length: "Svarstaket nått", max_tokens: "Svarstaket nått", stop: "Normalt avslut" }[trace.finish_reason], trace.finish_reason) : "")));
+    return box;
+  }
   function renderMissionDetail() {
     const info = routeInfo(); if (info.group !== "missions" || !info.detail) return;
-    const target = byId("v13-mission-detail"), mission = first(state.detailCache["missions:" + info.sub]?.mission, missionRecords().find((m) => m.id === info.sub)); target.replaceChildren();
+    const detail = state.detailCache["missions:" + info.sub], target = byId("v13-mission-detail"), mission = first(detail?.mission, missionRecords().find((m) => m.id === info.sub)); target.replaceChildren();
     if (!mission) { empty(target, "Uppdraget finns inte i den tillgängliga historiken.", "Till uppdrag", "/missions"); return; }
-    const heading = el("div", "view-heading"); const title = el("div"); title.append(routeLink("← Alla uppdrag", "/missions"), el("h1", "", mission.goal), el("p", "muted", mission.id)); heading.append(title, badge(missionState(mission))); target.append(heading, missionControls(mission));
-    const tasks = currentTasks(mission.id), done = tasks.filter((t) => asStatus(t) === "COMPLETED").length;
+    const heading = el("div", "view-heading"); const title = el("div"); title.append(routeLink("← Alla uppdrag", "/missions"), el("h1", "", mission.goal), el("p", "muted", mission.id)); heading.append(title, badge(missionState(mission))); target.append(heading, missionControls(mission, detail?.recovery));
+    const tasks = orderedMissionTasks(detail?.tasks || currentTasks(mission.id)), done = tasks.filter((t) => asStatus(t) === "COMPLETED").length;
     const stats = el("div", "detail-stats"); stats.append(statCard("Steg", done + " / " + tasks.length, "Slutförda / registrerade"), statCard("Kostnad & reservation", mission.actual_and_pending_cost_minor, "Uppdragets aktuella belastning", true), statCard("Kostnadstak", mission.max_cost_minor, "Överordnade mandat gäller", true), statCard("Tidsgräns", date(mission.deadline_at), "Skapad " + date(mission.created_at))); target.append(stats);
     if (mission.blocker || mission.uncertain_outcome) target.append(el("div", "notice notice-error", first(mission.blocker?.message, mission.blocker?.code, "Leverantörsutfallet är okänt. Manuell avstämning krävs innan fortsatt arbete.")));
+    const recovery = missionRecovery(mission, detail); if (recovery) target.append(recovery);
     const timeline = el("article", "panel"); timeline.append(el("h2", "", "Uppdragets steg & tidslinje"));
-    for (const task of tasks) { const row = el("div", "timeline-row"); const marker = el("span", "timeline-marker", asStatus(task) === "COMPLETED" ? "✓" : "·"); const body = el("div", "timeline-copy"); const header = el("div", "task-heading"); header.append(el("strong", "", (agentNames[task.role] || task.role) + " · " + first(task.objective, task.step, "Internt delsteg")), badge(asStatus(task))); body.append(header, el("p", "row-meta", "Start " + date(first(task.started_at, task.created_at)) + " · klar " + date(task.finished_at))); if (task.error_code || task.error_message) body.append(el("p", "blocker-note", first(task.error_message, errorNames[task.error_code], task.error_code))); if (task.output) body.append(resultDetails("Visa registrerat resultat", taskOutput(task))); row.append(marker, body); timeline.append(row); }
+    for (const task of tasks) { const row = el("div", "timeline-row"); const marker = el("span", "timeline-marker", asStatus(task) === "COMPLETED" ? "✓" : "·"); const body = el("div", "timeline-copy"); const header = el("div", "task-heading"); header.append(el("strong", "", (agentNames[task.role] || task.role) + " · " + first(task.objective, task.step, "Internt delsteg")), badge(asStatus(task))); body.append(header, el("p", "row-meta", "Start " + date(first(task.started_at, task.created_at)) + " · klar " + date(task.finished_at))); if (task.error_code || task.error_message) body.append(el("p", "blocker-note", first(errorNames[task.error_code], task.error_message, task.error_code))); const usage = missionTaskUsage(task, detail?.ai_traces); if (usage) body.append(usage); if (task.output) body.append(resultDetails("Visa registrerat resultat", taskOutput(task))); row.append(marker, body); timeline.append(row); }
     if (!tasks.length) timeline.append(el("p", "empty-state", "Ingen deluppgift har registrerats.")); target.append(timeline);
     const outputs = resultRecords().filter((r) => r.mission_id === mission.id); const box = el("article", "panel"); box.append(el("h2", "", "Leverabler")); for (const result of outputs) box.append(routeLink(result.title + " · version " + result.version, "/deliverables/" + encodeURIComponent(result.id), "result-link")); if (!outputs.length) box.append(el("p", "muted", "Ingen leverabel är sparad ännu.")); target.append(box, technicalDetails({ mission, tasks }));
   }

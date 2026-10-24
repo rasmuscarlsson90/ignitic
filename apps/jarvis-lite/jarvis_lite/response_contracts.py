@@ -80,7 +80,7 @@ ERRORS = {
     "ai_json_invalid": "AI-svaret är inte ett fullständigt giltigt JSON-dokument.",
     "ai_schema_invalid": "AI-svaret följer inte uppdragets strukturerade svarsschema.",
     "ai_policy_violation": "AI-svaret föreslog en otillåten handling eller innehöll otillåtna behörighetsfält.",
-    "ai_output_truncated": "Modellens svar avbröts av utdatagränsen. Granska tokentaket innan ett nytt uppdrag skapas.",
+    "ai_output_truncated": "Modellens svar avbröts av utdatagränsen och har inte godkänts. Granska tokentaket, AI-godkännandet och budgeten före ett uttryckligt återförsök av det misslyckade steget.",
 }
 FORBIDDEN_KEYS = frozenset({"tools", "tool_calls", "function_call", "permissions", "grant_permissions",
     "approve_payment", "payment_authorized", "contact_authorized", "execute", "command"})
@@ -207,7 +207,7 @@ def _unsafe_raw(raw, name):
     return False
 
 
-def normalize(value, name=None, *, raw=None, finish_reason=None):
+def _normalize(value, name=None, *, raw=None, finish_reason=None):
     """Return a compatible envelope, error code and recorded harmless changes."""
     name = canonical(name)
     changes = []
@@ -275,3 +275,16 @@ def normalize(value, name=None, *, raw=None, finish_reason=None):
     if not validate(value, local_schema):
         return None, "ai_output_truncated" if finish_reason == "length" else "ai_schema_invalid", changes
     return value, None, changes
+
+
+def normalize(value, name=None, *, raw=None, finish_reason=None):
+    """A length finish is incomplete even when its JSON happens to parse.
+
+    Run the full policy validation first so forbidden fields/actions remain
+    ineligible for recovery. Never let a shape error on a truncated response
+    enter automatic format correction, which could invent missing information.
+    """
+    output, code, changes = _normalize(value, name, raw=raw, finish_reason=finish_reason)
+    if finish_reason == "length" and code != "ai_policy_violation":
+        return None, "ai_output_truncated", changes
+    return output, code, changes
