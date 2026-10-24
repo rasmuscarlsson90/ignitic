@@ -1,4 +1,8 @@
-# Jarvis Lite v1.4 · powered by Ignitic
+# Jarvis Lite v1.5 development · powered by Ignitic
+
+The autonomous research implementation and completed offline acceptance are documented in
+[the v1.5 progress/Render guide](../../docs/jarvis-lite-v1.5-progress.md).
+Enable real research only after reviewing the PR, provider terms/pricing, keys and explicit spending authorization.
 
 An internal business-operator console in one FastAPI application with PostgreSQL,
 a database-backed queue and six logical agent roles. The original Ignitic stack

@@ -25,6 +25,7 @@ class Mission(Key):
     max_retries: int = Field(default=1, ge=0, le=2)
     deadline_seconds: int = Field(default=3600, ge=60, le=86400)
     max_revisions: int = Field(default=1, ge=0, le=1)
+    research_mode: str = "manual"
 
 
 class Order(Key):

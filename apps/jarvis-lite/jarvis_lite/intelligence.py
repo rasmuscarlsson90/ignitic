@@ -60,6 +60,58 @@ def _sources(tx, ids):
     return result
 
 
+def _mission_pack(tx, mission):
+    """Read immutable current evidence, never infer support from an approved URL."""
+    if not mission or mission.get("research_mode") != "autonomous":
+        return None
+    from . import evidence
+    pack = tx.get("evidence_pack", mission.get("evidence_pack_id", ""))
+    if (not pack or pack.get("mission_id") != mission.get("id")
+            or pack.get("status") != "COMPLETE"):
+        raise PolicyError("evidence_pack_required", "Ett komplett, spårbart faktaunderlag krävs före specialistarbete.", 409)
+    evidence.validate_pack(pack)
+    for snapshot in pack.get("sources", []):
+        source_id = snapshot.get("id", snapshot.get("source_id"))
+        source = research._approved(tx, source_id)
+        if (source.get("version") != snapshot.get("source_version")
+                or source.get("content_hash") is not None
+                and source.get("content_hash") != snapshot.get("content_hash")):
+            raise PolicyError("evidence_pack_changed", "Källans version eller innehåll stämmer inte längre med det gemensamma faktaunderlaget.", 409)
+    return pack
+
+
+def mission_evidence(tx, mission):
+    """A bounded shared factual handoff; creative analysis has no factual authority."""
+    pack = _mission_pack(tx, mission)
+    if pack is None:
+        return {}
+    context = getattr(tx, "agent_context", None) or {}
+    if context.get("mission_id") == mission.get("id"):
+        usage_id = fingerprint({"pack": pack["id"], "role": context.get("role"), "task": context.get("task_id")})
+        if not tx.get("evidence_usage", usage_id):
+            tx.create("evidence_usage", {"pack_id": pack["id"], "mission_id": mission["id"],
+                "role": context.get("role"), "task_id": context.get("task_id"),
+                "claim_ids": pack.get("verified_claim_ids", [])}, id=usage_id)
+    claims: list[dict] = []
+    for claim in pack.get("claims", []):
+        if claim.get("status") != "VERIFIED":
+            continue
+        candidate = {name: deepcopy(claim.get(name)) for name in
+            ("id", "text", "subject", "predicate", "value", "unit", "importance", "status")}
+        candidate["citations"] = [{name: item.get(name) for name in
+            ("source_id", "snippet", "canonical_url")} for item in claim.get("citations", [])[:2]]
+        if len(_encoded({"claims": [*claims, candidate]})) > 3200:
+            continue
+        claims.append(candidate)
+        if len(claims) >= 3:
+            break
+    return {"evidence_pack_id": pack["id"], "content_fingerprint": pack["content_fingerprint"],
+        "claims": claims, "information_gaps": [str(item)[:300] for item in pack.get("gaps", [])[:4]],
+        "claims_are_literal_corroborated_assertions": True, "semantic_correctness_verified": False,
+        "model_analysis_and_prices_are_hypotheses": True, "contact_authorized": False,
+        "payment_authorized": False}
+
+
 def verified_citations(tx, lead, source_ids=None):
     """Return current approved citations, never infer legal contact clearance."""
     if upgrade.classify_record(lead) != "REAL":
@@ -482,6 +534,7 @@ def prepare_strategy(tx, mission, actor, key):
     Pricing here is an unaccepted estimate. No service registration, accepted
     contract, real forecast, contact approval or bookable revenue is created.
     """
+    pack = _mission_pack(tx, mission)
     goal = _text(mission.get("goal"), "Business goal", 4000, 12)
     report_id = mission.get("research_report_id")
     report = tx.get("research_report", report_id or "")
@@ -508,13 +561,18 @@ def prepare_strategy(tx, mission, actor, key):
         "uncertainties": report.get("uncertainties", [])[:5], "source_conflicts": len(report.get("conflicts", [])),
         "minimum_proposed_net_price_minor": minimum, "maximum_items": 5,
         "estimated_costs_are_incomplete": True}
+    if pack:
+        request["verified_knowledge"] = mission_evidence(tx, mission)
+        request["task"] += " Each opportunity must have classification=HYPOTHESIS, claim_ids and factual_claims:[{claim_id,text}] exactly quoting VERIFIED claims. problem must equal one selected claim text. Creative analysis and prices are hypotheses, not new market facts."
     context = getattr(tx, "agent_context", None) or {}
     result, content, status = _call(tx, role="sales", payload=request,
         workflow_id=("mission:" + context["mission_id"] if context else "strategy:" + str(mission.get("id", "direct"))) + ":sales",
-        key="strategy-ai:" + fingerprint(key)[:64], actor=actor, contract="sales_strategy")
+        key="strategy-ai:" + fingerprint(key)[:64], actor=actor, contract="sales_strategy_evidence" if pack else "sales_strategy")
     opportunities, issues = [], []
     fields = {"title", "target_group", "problem", "solution", "price_estimate_minor", "cost_estimate_minor",
               "competition", "risks", "source_ids", "next_steps", "assumptions"}
+    if pack:
+        fields |= {"classification", "claim_ids", "factual_claims"}
     rows = (content or {}).get("opportunities")
     valid = (isinstance(content, dict) and set(content) == {"summary", "opportunities"}
              and isinstance(content["summary"], str) and 1 <= len(content["summary"]) <= 2000
@@ -536,6 +594,15 @@ def prepare_strategy(tx, mission, actor, key):
                            for source_id in item["source_ids"])):
                 issues.append("unsupported_or_unbounded_opportunity")
                 continue
+            if pack:
+                from . import evidence
+                try:
+                    selected = evidence.guard_downstream(pack, item.get("claim_ids"), statements=item.get("factual_claims"))
+                    if item.get("classification") != "HYPOTHESIS" or item["problem"] not in {claim["text"] for claim in selected}:
+                        raise PolicyError("unsupported_or_unbounded_opportunity", "Problem saknar ordagrant stöd")
+                except PolicyError:
+                    issues.append("unsupported_or_unbounded_opportunity")
+                    continue
             opportunities.append({**deepcopy(item), "rank": rank, "assessment_is_hypothesis": True,
                 "currency": "SEK", "prices_are_estimates": True, "verified_revenue_minor": 0,
                 "commercial_service_approved": False, "grants_contact_authority": False,

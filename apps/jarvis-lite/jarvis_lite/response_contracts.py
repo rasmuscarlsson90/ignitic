@@ -49,8 +49,36 @@ OPPORTUNITY = obj({"title": {"type": "string", "minLength": 1, "maxLength": 200}
     "competition": SHORT, "risks": OPPORTUNITY_STRINGS,
     "source_ids": {**IDS, "minItems": 1, "maxItems": 10},
     "next_steps": OPPORTUNITY_STRINGS, "assumptions": OPPORTUNITY_STRINGS})
+FACTUAL_CLAIM = obj({"claim_id": IDENTIFIER,
+    "text": {"type": "string", "minLength": 1, "maxLength": 1000}})
+FACTUAL_CLAIMS = {"type": "array", "items": FACTUAL_CLAIM, "minItems": 1, "maxItems": 6}
+HYPOTHESIS = {"type": "string", "enum": ["HYPOTHESIS"]}
+EVIDENCED_OPPORTUNITY = obj({**deepcopy(OPPORTUNITY["properties"]),
+    "classification": HYPOTHESIS,
+    "claim_ids": {"type": "array", "items": IDENTIFIER, "minItems": 1, "maxItems": 6},
+    "factual_claims": FACTUAL_CLAIMS})
+WEB_CLAIM = obj({"text": {"type": "string", "minLength": 1, "maxLength": 1000},
+    "subject": {"type": "string", "minLength": 1, "maxLength": 200},
+    "predicate": {"type": "string", "minLength": 1, "maxLength": 200},
+    "value": {"type": "string", "minLength": 1, "maxLength": 300},
+    "unit": {"type": "string", "minLength": 0, "maxLength": 80},
+    "kind": {"type": "string", "enum": ["fact", "estimate", "hypothesis"]},
+    "importance": {"type": "string", "enum": ["ordinary", "numerical", "commercial"]},
+    "citations": {"type": "array", "minItems": 1, "maxItems": 4,
+        "items": obj({"source_id": IDENTIFIER,
+            "snippet": {"type": "string", "minLength": 1, "maxLength": 500}})}})
+INFORMATION_GAPS = {"type": "array", "maxItems": 6,
+    "items": {"type": "string", "minLength": 1, "maxLength": 500}}
 PAYLOADS = {
     "ceo_plan": obj({"tasks": {"type": "array", "items": TASK, "minItems": 5, "maxItems": 5}}),
+    "ceo_plan_research": obj({"tasks": {"type": "array", "items": TASK, "minItems": 5, "maxItems": 5},
+        "information_needs": {**INFORMATION_GAPS, "minItems": 1}}),
+    "web_research_plan": obj({"queries": {"type": "array", "maxItems": 3,
+        "items": {"type": "string", "minLength": 1, "maxLength": 300}},
+        "information_gaps": INFORMATION_GAPS,
+        "decision": {"type": "string", "enum": ["search", "stop"]}}),
+    "web_research_claims": obj({"claims": {"type": "array", "items": WEB_CLAIM, "maxItems": 12},
+        "information_gaps": INFORMATION_GAPS}),
     "research_report": obj({"summary": {"type": "string", "minLength": 1, "maxLength": 4000},
         "candidates": {"type": "array", "items": CANDIDATE, "maxItems": 50},
         "findings": {"type": "array", "items": obj({"claim": SHORT, "source_ids": IDS,
@@ -68,7 +96,11 @@ PAYLOADS = {
         ["service_id", "package_name", "fit_reason", "email_subject", "email_body"]),
     "sales_strategy": obj({"summary": SHORT,
         "opportunities": {"type": "array", "items": OPPORTUNITY, "minItems": 1, "maxItems": 5}}),
+    "sales_strategy_evidence": obj({"summary": SHORT,
+        "opportunities": {"type": "array", "items": EVIDENCED_OPPORTUNITY, "minItems": 1, "maxItems": 5}}),
     "service_result": SERVICE,
+    "service_result_evidence": obj({**deepcopy(SERVICE["properties"]),
+        "classification": HYPOTHESIS, "factual_claims": FACTUAL_CLAIMS}),
     "compliance_qa": obj({"verdict": {"type": "string", "enum": ["pass", "revise", "review"]},
         "findings": STRINGS, "summary": SHORT, "source_ids": IDS}),
 }
@@ -76,6 +108,9 @@ ROLE_CONTRACTS = {"ceo_plan": "ceo", "ceo_summary": "ceo", "research_report": "l
     "lead_score": "lead_research", "sales_offer": "sales", "sales_strategy": "sales",
     "service_result": "delivery", "delivery": "delivery", "finance_analysis": "finance",
     "compliance_qa": "compliance", "analysis": None}
+ROLE_CONTRACTS.update(ceo_plan_research="ceo", web_research_plan="lead_research",
+    web_research_claims="lead_research", sales_strategy_evidence="sales",
+    service_result_evidence="delivery")
 ERRORS = {
     "ai_json_invalid": "AI-svaret är inte ett fullständigt giltigt JSON-dokument.",
     "ai_schema_invalid": "AI-svaret följer inte uppdragets strukturerade svarsschema.",
@@ -238,7 +273,7 @@ def _normalize(value, name=None, *, raw=None, finish_reason=None):
         return None, "ai_schema_invalid", changes
     value = deepcopy(value)
     if value.get("action") == "plan":
-        if name != "ceo_plan":
+        if name not in {"ceo_plan", "ceo_plan_research"}:
             return None, "ai_policy_violation", changes
         value["action"] = "recommend"
         changes.append("ceo_plan_action_alias")
@@ -264,12 +299,12 @@ def _normalize(value, name=None, *, raw=None, finish_reason=None):
             return None, "ai_policy_violation", changes
         if not validate(data, payload):
             return None, "ai_output_truncated" if finish_reason == "length" else "ai_schema_invalid", changes
-        if name == "ceo_plan" and {task["role"] for task in data["tasks"]} != set(SPECIALISTS):
+        if name in {"ceo_plan", "ceo_plan_research"} and {task["role"] for task in data["tasks"]} != set(SPECIALISTS):
             return None, "ai_schema_invalid", changes
         if name == "sales_offer" and ("\r" in data["email_subject"] or "\n" in data["email_subject"]):
             return None, "ai_policy_violation", changes
         value["text"] = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-    text_limit = 32000 if name == "service_result" else 12000
+    text_limit = 32000 if name in {"service_result", "service_result_evidence"} else 12000
     local_schema = contract_schema(None)
     local_schema["properties"]["text"]["maxLength"] = text_limit
     if not validate(value, local_schema):

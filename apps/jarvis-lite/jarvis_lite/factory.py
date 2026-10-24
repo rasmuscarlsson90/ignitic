@@ -87,6 +87,10 @@ def _mission_context(tx, mission_id):
 
 
 def _source(tx, source_id):
+    from . import research
+    existing = tx.get("research_source", source_id) or {}
+    if existing.get("approval_mode") == "AUTONOMOUS_POLICY":
+        return research._approved(tx, source_id)
     source = tx.get("research_source", source_id)
     if (not source or not source.get("approved") or not source.get("license_reviewed")
             or source.get("data_mode", "REAL") != "REAL"
@@ -162,6 +166,9 @@ def _mission_material(tx, mission):
     research_id = mission.get("research_report_id")
     report = tx.get("research_report", research_id) if research_id else None
     material: dict[str, Any] = {}
+    if mission.get("research_mode") == "autonomous":
+        from . import intelligence
+        material["verified_knowledge"] = intelligence.mission_evidence(tx, mission)
     if report:
         analysis = report.get("analysis") if isinstance(report.get("analysis"), dict) else {}
         material["research_context"] = {"report_id": report["id"], "summary_excerpt": str(analysis.get("summary", ""))[:500],
@@ -326,7 +333,7 @@ def _prompt(order):
     }
     if order.get("workflow_version") == "1.3":
         payload["financial_context"] = order.get("financial_snapshot", {})
-        for name in ("research_context", "opportunity_context"):
+        for name in ("research_context", "opportunity_context", "verified_knowledge"):
             if order.get(name):
                 payload[name] = order[name]
         payload["requirements"].extend([
@@ -338,16 +345,29 @@ def _prompt(order):
         ])
         if order.get("revision_feedback"):
             payload["quality_revision"] = order["revision_feedback"]
+    if order.get("verified_knowledge"):
+        payload["requirements"].append("Also include classification=HYPOTHESIS and factual_claims:[{claim_id,text}] exactly quoting supplied VERIFIED claims. All free-form analysis is a hypothesis, not verified market demand.")
     return json.dumps(payload, ensure_ascii=False)
 
 
-def _normalize_output(order, response):
+def _normalize_output(order, response, tx=None):
     issues = []
     try:
         text = response["output"]["text"]
         content = json.loads(text)
-        if not isinstance(content, dict) or set(content) != {"title", "sections", "next_actions", "limitations", "company_ids"}:
+        required_fields = {"title", "sections", "next_actions", "limitations", "company_ids"}
+        if order.get("verified_knowledge"):
+            required_fields |= {"classification", "factual_claims"}
+        if not isinstance(content, dict) or set(content) != required_fields:
             raise ValueError
+        if order.get("verified_knowledge"):
+            from . import autonomous_research, evidence
+            mission = tx.get("business_mission", order["mission_id"])
+            pack = autonomous_research.guard_current_pack(tx, mission)
+            factual = content.get("factual_claims", [])
+            if content.get("classification") != "HYPOTHESIS":
+                raise ValueError
+            evidence.guard_downstream(pack, [item.get("claim_id") for item in factual], statements=factual)
         title = _text(content["title"], "Generated title", 200)
         sections = content["sections"]
         required = TYPES[order["kind"]]["sections"]
@@ -381,6 +401,8 @@ def _normalize_output(order, response):
             company_ids = []
         generated = {"title": title, "sections": normalized, "next_actions": next_actions,
                      "limitations": limitations, "company_ids": list(dict.fromkeys(company_ids))}
+        if order.get("verified_knowledge"):
+            generated.update(classification="HYPOTHESIS", factual_claims=content["factual_claims"])
         serialized = json.dumps(generated, ensure_ascii=False)
         if len(serialized) > MAX_RESULT_CHARS:
             raise ValueError
@@ -460,7 +482,7 @@ def generate(tx, order_id, actor, key):
     workflow_id = "mission:" + order["mission_id"] + ":delivery" if order.get("mission_id") else "factory:" + order_id
     previous_contract = getattr(tx, "ai_response_contract", None)
     if order.get("workflow_version") == "1.3":
-        tx.ai_response_contract = "service_result"
+        tx.ai_response_contract = "service_result_evidence" if order.get("verified_knowledge") else "service_result"
     before_traces = {item["id"] for item in tx.list("ai_trace")}
     try:
         response = ai.task(tx, role="delivery", text=prompt, workflow_id=workflow_id,
@@ -493,7 +515,7 @@ def generate(tx, order_id, actor, key):
     if response.get("status") not in {"COMPLETED", "REVIEW_REQUIRED"}:
         order["generation_state"] = response.get("status", "BLOCKED")
         return _blocked(tx, order, "ai_" + str(response.get("status", "blocked")).lower())
-    content, issues = _normalize_output(order, response)
+    content, issues = _normalize_output(order, response, tx)
     if content is None:
         order.update(generation_state="REJECTED_OUTPUT", status="QUALITY_REVIEW", blocked_reason="invalid_deliverable_structure")
         tx.put("service_order", order_id, order)
