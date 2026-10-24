@@ -159,7 +159,7 @@ def create_app(database=None, *, worker_enabled=None):
         if database is None:
             db.close()
 
-    app = FastAPI(title="Jarvis Lite · powered by Ignitic", version="1.5.0", lifespan=lifespan,
+    app = FastAPI(title="Jarvis Lite · powered by Ignitic", version="1.5.1", lifespan=lifespan,
                   docs_url=None if production else "/docs")
     app.state.db = db
 
@@ -205,7 +205,7 @@ def create_app(database=None, *, worker_enabled=None):
     def health():
         with db.engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        return {"status": "healthy", "service": "jarvis-lite", "version": "1.5.0"}
+        return {"status": "healthy", "service": "jarvis-lite", "version": "1.5.1"}
 
     @app.post("/api/auth/login")
     def login(body: Login, request: Request):

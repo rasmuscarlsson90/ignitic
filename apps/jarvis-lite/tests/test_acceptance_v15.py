@@ -17,7 +17,7 @@ def prepare(client, db, monkeypatch, *, unsupported=False):
         budget.set_fx_rate(tx,currency='USD',sek_per_unit='12',source=REASON,observed_at=tx.now,actor=ADMIN)
         observed=tx.now
     post(client,'/api/ai/config',headers,{'enabled':True,'max_output_tokens':4096,'reason':REASON})
-    post(client,'/api/research/autonomy/policy',headers,{'allowed_domains':['alpha.example','beta.example'],
+    post(client,'/api/research/autonomy/policy',headers,{'allowed_domains':['alpha.example.com','beta.example.org'],
         'terms_reviewed':True,'terms_reference':REASON,'provider_terms_reference':'https://brave.com/terms/',
         'query_price_usd':'0.005','pricing_evidence':'https://brave.com/search/api/',
         'pricing_observed_at':observed,'reason':REASON})
@@ -49,8 +49,8 @@ def prepare(client, db, monkeypatch, *, unsupported=False):
     search_original=search_provider.BraveSearchAdapter
     class OfflineSearch(search_original):
         def __init__(self,**kwargs):super().__init__(transport=httpx.MockTransport(lambda req:httpx.Response(200,headers={'content-type':'application/json'},json={
-            'type':'search','web':{'results':[{'url':'https://alpha.example/report','title':'AI småföretag'},{'url':'https://beta.example/report','title':'AI småföretag'},
-                              {'url':'https://outside.example/report','title':'Ej tillåten källa'}]}})),**kwargs)
+            'type':'search','web':{'results':[{'url':'https://alpha.example.com/report','title':'AI småföretag'},{'url':'https://beta.example.org/report','title':'AI småföretag'},
+                              {'url':'https://outside.example.net/report','title':'Ej tillåten källa'}]}})),**kwargs)
     monkeypatch.setattr(ai,'OpenRouterAdapter',OfflineAI)
     monkeypatch.setattr(search_provider,'BraveSearchAdapter',OfflineSearch)
     monkeypatch.setattr(web_retrieval,'PublicWebAdapter',Pages)

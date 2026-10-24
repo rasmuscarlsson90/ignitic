@@ -16,7 +16,7 @@ def setup(tx, monkeypatch):
     for name in ('JARVIS_ALLOW_AUTONOMOUS_RESEARCH', 'JARVIS_ALLOW_RESEARCH_NETWORK'):
         monkeypatch.setenv(name, 'true')
     monkeypatch.setenv('BRAVE_SEARCH_API_KEY', 'synthetic-search-test-only')
-    ar.configure(tx, {'allowed_domains': ['alpha.example', 'beta.example'], 'terms_reviewed': True,
+    ar.configure(tx, {'allowed_domains': ['alpha.example.com', 'beta.example.org'], 'terms_reviewed': True,
         'terms_reference': REASON, 'provider_terms_reference': 'https://brave.com/terms/',
         'query_price_usd': '0.005', 'pricing_evidence': 'https://brave.com/search/api/',
         'pricing_observed_at': tx.now, 'min_domain_interval_seconds': 1, 'reason': REASON}, ADMIN)
@@ -32,7 +32,7 @@ class Search:
     calls = 0
     def search(self, query, **kwargs):
         self.calls += 1
-        return {'results': [{'url': 'https://alpha.example/report'}, {'url': 'https://beta.example/report'}]}
+        return {'results': [{'url': 'https://alpha.example.com/report'}, {'url': 'https://beta.example.org/report'}]}
 
 
 class Pages:
@@ -113,15 +113,15 @@ def test_claim_support_rejects_fabrication_stale_and_spoofing(db, monkeypatch):
         mission = setup(tx, monkeypatch)
         cfg = ar._config(tx)
         sources = [evidence.evaluate_source(Pages().fetch('https://' + host + '/report', cfg), cfg,
-            now=tx.now, goal=mission['goal']) for host in ('alpha.example', 'beta.example')]
+            now=tx.now, goal=mission['goal']) for host in ('alpha.example.com', 'beta.example.org')]
         claim = {'text': TEXT, 'subject': 'småföretag', 'predicate': 'använder', 'value': 'AI', 'unit': '',
             'kind': 'fact', 'importance': 'commercial', 'citations': [{'source_id': s['id'], 'snippet': TEXT} for s in sources]}
         assert evidence.review_claims([claim], sources, now=tx.now)['claims'][0]['status'] == 'VERIFIED'
         assert evidence.review_claims([{**claim, 'text': 'Alla företag behöver köpa AI-tjänster nu'}], sources)['claims'][0]['status'] == 'REJECTED'
         assert evidence.review_claims([{**claim, 'citations': claim['citations'][:1]}], sources)['claims'][0]['status'] == 'UNVERIFIED'
-        spoof = Pages().fetch('https://alpha.example.attacker.example/report', cfg)
+        spoof = Pages().fetch('https://alpha.example.com.attacker.example/report', cfg)
         assert evidence.evaluate_source(spoof, cfg, now=tx.now)['status'] == 'REJECTED'
-        stale = {**Pages().fetch('https://alpha.example/report', cfg), 'published_at': tx.now - 4000*86400}
+        stale = {**Pages().fetch('https://alpha.example.com/report', cfg), 'published_at': tx.now - 4000*86400}
         assert evidence.evaluate_source(stale, cfg, now=tx.now)['status'] == 'REJECTED'
 
 
