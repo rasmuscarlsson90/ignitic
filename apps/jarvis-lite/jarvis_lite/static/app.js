@@ -1354,7 +1354,9 @@
   }
   function renderDiscoveredSources(data) {
     const target = byId("autonomy-sources"), filter = byId("autonomy-source-filter").value; target.replaceChildren();
-    for (const source of latest(data.sources).filter((item) => !filter || sourceState(item) === filter).slice(0, 60)) {
+    const evaluated = list(data.sources), known = new Set(evaluated.map((source) => first(source.canonical_url, source.url)));
+    const discovered = list(data.discoveries).filter((source) => !known.has(first(source.canonical_url, source.url))).map((source) => ({ ...source, reasons: source.rejection_reason ? [source.rejection_reason] : [] }));
+    for (const source of latest([...evaluated, ...discovered]).filter((item) => !filter || sourceState(item) === filter).slice(0, 60)) {
       const card = el("article", "discovered-source"); const head = el("div", "task-heading"); const status = sourceState(source); head.append(el("h3", "", first(source.title, source.canonical_url, "Upptäckt offentlig källa")), badge(status === "approved" ? "AUTO_APPROVED" : status === "rejected" ? "REJECTED" : "PENDING")); card.append(head);
       card.append(publicSourceLink(first(source.canonical_url, source.url), first(source.canonical_url, source.url)), el("p", "row-meta", "Utgivare: " + first(source.publisher, source.publisher_group, "Inte verifierad") + " · publicerad " + date(source.published_at) + " · läst " + date(first(source.retrieved_at, source.accessed_at, source.created_at))));
       if (source.reliability !== undefined || source.confidence !== undefined) card.append(el("p", "small", "Källtillförlitlighet: " + first(source.reliability, source.confidence) + " / 100 · inte ett intyg om varje påstående."));

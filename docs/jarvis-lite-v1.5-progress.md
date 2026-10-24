@@ -1,6 +1,6 @@
 # v1.5 implementation checkpoint — 2026-10-24
 
-Branch: `feat/jarvis-lite-v1.5-autonomous-research`. Based on the existing user brief commit `edf99d43` and merged v1.4 `41166d37`. This is a reviewable implementation milestone, **not a claim that every acceptance criterion is finished or that production activation is approved**.
+Branch: `feat/jarvis-lite-v1.5-autonomous-research`. Based on the existing user brief commit `edf99d43` and merged v1.4 `41166d37`. Implementation and offline acceptance are documented below. Production activation remains a separate operator decision.
 
 ## Implemented
 
@@ -13,22 +13,30 @@ Branch: `feat/jarvis-lite-v1.5-autonomous-research`. Based on the existing user 
 - Shared evidence handoff to specialists; Sales requires exact VERIFIED premise text and explicit hypothesis classification. Delivery has a corresponding factual-claim guard. Original unsupported-opportunity blockers remain.
 - Swedish research policy/discovery/evidence/budget views and autonomous mission selection, retaining the existing design and manual catalogue.
 
-## Verified at this checkpoint
+## Final acceptance — PR #7
 
-- Full suite with local PostgreSQL: **811 passed**, one upstream Starlette/httpx warning, before the last two Sales cases were added.
-- Latest focused suite: **16 passed**, including those two Sales cases, the worker-chain regression and an eight-connection PostgreSQL search-budget race. It covers a complete mocked search/fetch/extract/evidence loop, replay without another search charge, source acceptance without manual URLs, stale/spoofed/fabricated claims, unknown-charge retention, policy hard bounds, old pending liabilities and HTTP admin/CSRF checks.
-- Existing search-provider and public-retrieval tests are included in the full run. Existing v1.4 tests remain intact.
-- Ruff, mypy (30 modules), JavaScript syntax, actionlint for both workflows and whitespace checks passed.
-- Chromium on a real isolated server: authentication, v1.5 hydration, disabled Swedish policy screen, expanded admin form and no JavaScript errors passed. Browser used only loopback requests; its server was stopped. This is a smoke test, not full positive autonomous-mission browser acceptance.
-- No actual paid search, real LLM request, customer contact, payment, purchase, production mutation, merge or deploy occurred.
+The original checkpoint is preserved in Git history. Acceptance additions run against the existing v1.5 implementation, not a replacement system.
 
-## Remaining before declaring v1.5 complete
+| Criterion | Evidence and result |
+| --- | --- |
+| Full HTTP chain and real AI adapter | `test_acceptance_v15.py`: authenticated HTTP mission creation/idempotency and worker ticks; real OpenRouter adapter with `httpx.MockTransport`; real Brave adapter with its own MockTransport; fixture public pages. CEO → bounded Research continuations → Sales → Delivery → Finance → Compliance → CEO summary completes. Nine distinct AI traces, one search, one shared evidence pack recorded for all six roles. |
+| Honest costs/data | Search12SEK minor units and AI108minor units are separate; billed search invoice remains unknown. Zero invented CRM leads, email messages, payments or verified revenue. |
+| Insufficient evidence | HTTP negative case rejects invented demand, attempts bounded complementary research, records actionable gaps and stops before Sales. Existing strict Sales tests reject substituted unsupported assertions even with valid source IDs. |
+| Restart and unknown costs | `test_lifecycle_v15.py`: a new Database instance resumes after the search phase without another paid query; unknown requests remain unknown after reopening with the same retained reservation. |
+| Concurrency and calendar budget | Existing eight-independent-connection PostgreSQL search race still applies. New test crosses the exact Europe/Stockholm November boundary: prior settled cost leaves the calendar window; all unknown/pending liabilities remain counted. |
+| Revocation and stops | Revoking policy blocks evidence reuse without deleting original packs/sources. Emergency stop between durable intent and HTTP dispatch releases the definitively uncharged reserve and makes zero provider calls. |
+| Browser | Reproducible `tests/browser_v15_acceptance.py`: 11 positive controls on a real isolated server populated through the full HTTP/MockTransport acceptance flow. Search queries, approved/rejected source filters and reasons, literal facts/agent usage, separate costs, mission evidence, mobile rendering, viewer restrictions and actual admin policy save/deactivation. No external browser requests or JavaScript errors; server stopped. |
+| Backward compatibility | Complete suite includes unchanged v1.4 recovery, authorization, accounting, factory and PostgreSQL tests. |
+| Static/security checks | Ruff, mypy30modules, JavaScript syntax, actionlint/whitespace and secret scans. Frozen runtime audit: no known vulnerabilities. |
+| Docker | Existing PR #7 workflow is rerun for the final commit: production Dockerfile build, non-root startup, isolated PostgreSQL health/security checks and cleanup. No Render deployment. |
 
-1. **Next concrete step:** extend the passing full worker-chain regression to HTTP and the actual AI HTTP adapter with MockTransport. Run CEO → research continuations → Sales → Delivery → Finance → Compliance → CEO summary; assert exact shared pack/usage, retained identities, separate search/AI costs and zero fabricated leads/revenue. The whole worker graph now passes in a single test with mocked AI results, search and page retrieval. The actual AI HTTP adapter and HTTP mission route still need to be exercised together.
-2. Extend the passing eight-connection PostgreSQL search-budget race with calendar-month rollover, stopped/in-flight work/restart and current-policy revocation tests. Existing general PostgreSQL locking/recovery tests pass; they are not a substitute for every new research scenario.
-3. Complete positive mission/provenance/activation and viewer/mobile browser acceptance, including gaps and rejected sources. Current browser smoke does not cover all these cases.
-4. Review the new policy/evidence/worker integration independently, particularly downstream factual-vs-hypothesis handling and publisher independence. Mechanical literal matching cannot prove factual truth or copyright/terms compliance.
-5. Review final dependency audit and production Docker CI. Do not activate production research until the remaining tests and review pass.
+The final local suite passed **822 tests** with PostgreSQL in 63.19seconds. The frozen dependency audit found no known vulnerabilities. The final GitHub Actions conclusion, including Docker checks, is reported in the handoff/PR #7 checks. One upstream Starlette/httpx deprecation warning remains nonblocking.
+
+Two browser-found issues were corrected: rejected search discoveries were omitted from the source list, and several numeric form bounds exceeded the actual server limits. The source list now merges discoveries with evaluations without duplicating evaluated URLs, and UI bounds match server policy.
+
+Browser reproduction (from `apps/jarvis-lite`, after `uv sync --frozen --all-extras`): `uv run --with playwright python tests/browser_v15_acceptance.py`. It uses installed Chromium at `/usr/bin/chromium`, a temporary SQLite database, fake provider keys, blocked external sockets and all served runtime capabilities disabled. The HTTP acceptance fixtures enable only mocked adapters while seeding; they never call a live paid provider.
+
+No implementation acceptance item remains intentionally deferred. Real provider credentials, independently verified current pricing/terms, a production backup/rehearsal and authorized production activation remain operator rollout requirements. Automated corroboration proves literal attributed support, not complete semantic truth, legal permission, or actual market demand beyond the quoted assertion. No paid live API acceptance is claimed.
 
 ## Render and configuration
 
@@ -46,4 +54,4 @@ The official public Brave SDK established the request contract. Direct official 
 
 Preserve the existing Render service, PostgreSQL URL, session/encryption keys and users. Back up and restore to an isolated database before a separately approved manual upgrade. Do not reapply a Blueprint or run `init-demo` against production. Keep contact/payment capabilities disabled. For rollback, stop workers, return to the recorded earlier image and preserve the database/history; do not blindly resume v1.5 continuation jobs under older code.
 
-CI for checkpoint `0fdfe674` passed: https://github.com/rasmuscarlsson90/ignitic/actions/runs/40078346380 (tests, audit, Docker build/non-root PostgreSQL startup). Later test-only additions are submitted to a new CI run.
+CI for checkpoint `0fdfe674` passed: https://github.com/rasmuscarlsson90/ignitic/actions/runs/40078346380 (tests, audit, Docker build/non-root PostgreSQL startup). The PR #7 acceptance update reruns the workflow for the final commit.
