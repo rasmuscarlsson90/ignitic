@@ -1,4 +1,7 @@
-# Jarvis Lite v1.5 development · powered by Ignitic
+# Jarvis Lite v1.5.1 development · powered by Ignitic
+
+The optional v1.5.1 open public web mode, explicit approval and legal-review
+quarantine are documented in [the open research guide](../../docs/jarvis-lite-v1.5.1-open-research.md).
 
 The autonomous research implementation and completed offline acceptance are documented in
 [the v1.5 progress/Render guide](../../docs/jarvis-lite-v1.5-progress.md).

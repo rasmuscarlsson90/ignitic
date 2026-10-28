@@ -11,7 +11,7 @@ def register_routes(app, db, who):
         with db.transaction() as tx:
             who(tx, request)
             data = previous_overview(tx)
-            data.update(version="1.5.0", autonomous_research=autonomous_research.status(tx))
+            data.update(version="1.5.1", autonomous_research=autonomous_research.status(tx))
             return data
 
     @app.get("/api/research/autonomy")

@@ -129,7 +129,9 @@ def test_every_resolved_address_must_be_public_before_tcp(addresses):
     assert error.value.code == "web_ssrf" and not calls
 
 
-def test_redirect_cannot_rebind_valid_initial_domain_to_private_ip():
+@pytest.mark.parametrize("mode", ["allowlist", "open_public_web"])
+def test_redirect_cannot_rebind_valid_initial_domain_to_private_ip(mode):
+    scoped_policy = {**POLICY, "domain_access_mode": mode, "open_public_web_reviewed": True}
     lookups = []
 
     def resolver(host, deadline):
@@ -138,7 +140,7 @@ def test_redirect_cannot_rebind_valid_initial_domain_to_private_ip():
 
     adapter, calls, _, _ = fixture_adapter({("example.com", "/start"): Response(302, Location="/finish")}, resolver=resolver)
     with pytest.raises(PolicyError) as error:
-        adapter.fetch("https://example.com/start", POLICY)
+        adapter.fetch("https://example.com/start", scoped_policy)
     assert error.value.code == "web_ssrf"
     assert [item[1] for item in calls] == ["/robots.txt", "/start"]
 
@@ -225,7 +227,9 @@ def test_fresh_authority_callback_can_stop_after_dns_before_tcp():
     assert error.value.code == "kill_switch" and not calls
 
 
-def test_robots_crawl_delay_is_honored_between_page_reads():
+@pytest.mark.parametrize("mode", ["allowlist", "open_public_web"])
+def test_robots_crawl_delay_is_honored_between_page_reads(mode):
+    scoped_policy = {**POLICY, "domain_access_mode": mode, "open_public_web_reviewed": True}
     clock, sleeps = [100.0], []
 
     def sleep(seconds):
@@ -234,12 +238,14 @@ def test_robots_crawl_delay_is_honored_between_page_reads():
 
     adapter, _, _, _ = fixture_adapter({("example.com", "/robots.txt"): Response(200, "text/plain",
         b"User-agent: *\nAllow: /\nCrawl-delay: 2\n")}, clock=lambda: clock[0], sleeper=sleep)
-    adapter.fetch("https://example.com/one", POLICY)
-    adapter.fetch("https://example.com/two", POLICY)
+    adapter.fetch("https://example.com/one", scoped_policy)
+    adapter.fetch("https://example.com/two", scoped_policy)
     assert sleeps == [2.0]
 
 
-def test_concurrent_page_bundles_cannot_exceed_process_policy_cap():
+@pytest.mark.parametrize("mode", ["allowlist", "open_public_web"])
+def test_concurrent_page_bundles_cannot_exceed_process_policy_cap(mode):
+    scoped_policy = {**POLICY, "domain_access_mode": mode, "open_public_web_reviewed": True}
     entered, release = threading.Event(), threading.Event()
     errors = []
 
@@ -252,7 +258,7 @@ def test_concurrent_page_bundles_cannot_exceed_process_policy_cap():
 
     def worker():
         try:
-            adapter.fetch("https://example.com/first", POLICY)
+            adapter.fetch("https://example.com/first", scoped_policy)
         except Exception as error:
             errors.append(error)
 
@@ -261,7 +267,7 @@ def test_concurrent_page_bundles_cannot_exceed_process_policy_cap():
     assert entered.wait(2)
     try:
         with pytest.raises(PolicyError) as blocked:
-            adapter.fetch("https://example.com/second", POLICY)
+            adapter.fetch("https://example.com/second", scoped_policy)
         assert blocked.value.code == "web_concurrency_limit"
     finally:
         release.set()
@@ -304,3 +310,106 @@ def test_unsafe_or_unsupported_pdf_has_no_silent_partial_text(raw):
     with pytest.raises(PolicyError) as error:
         adapter.fetch("https://example.com/report.pdf", POLICY)
     assert error.value.code in {"web_pdf_invalid", "web_pdf_unsupported"}
+
+
+@pytest.mark.parametrize('mode', ['allowlist', 'open_public_web'])
+def test_effective_domain_policy_is_shared_with_discovery(mode):
+    from jarvis_lite.autonomous_research import _domain_allowed
+    policy = {**POLICY, 'domain_access_mode': mode, 'open_public_web_reviewed': True,
+              'prohibited_domains': ['blocked.org']}
+    for url, expected in [('https://example.com/report', True),
+                          ('https://new.example.org/report', mode == 'open_public_web'),
+                          ('https://a.blocked.org/report', False),
+                          ('http://example.com/report', False), ('https://127.0.0.1/', False),
+                          ('https://site.internal/', False), ('https://example.com/?api_key=secret', False)]:
+        assert _domain_allowed(url, policy) is expected
+        if expected:
+            assert web.validate_destination(url, policy)
+        else:
+            with pytest.raises(PolicyError):web.validate_destination(url, policy)
+
+
+def test_open_read_and_cross_domain_redirect_do_not_attest_terms_or_license():
+    policy = {**POLICY, 'domain_access_mode': 'open_public_web', 'open_public_web_reviewed': True}
+    adapter, calls, _, _ = fixture_adapter({('example.com', '/start'):
+        Response(302, Location='https://new.example.org/report')})
+    result = adapter.fetch('https://example.com/start', policy)
+    assert result['canonical_url'] == 'https://new.example.org/report'
+    assert result['robots_allowed'] is True
+    assert result['terms_allowed'] is result['license_reviewed'] is False
+    assert [(c[0], c[1]) for c in calls] == [('example.com', '/robots.txt'), ('example.com', '/start'),
+        ('new.example.org', '/robots.txt'), ('new.example.org', '/report')]
+    adapter, _, _, _ = fixture_adapter()
+    # No allowlist is needed for the open read.
+    result = adapter.fetch('https://new.example.org/report', {**policy, 'allowed_domains': []})
+    assert result['retrieval_status'] == 'SUCCESS' and result['terms_allowed'] is False
+
+
+@pytest.mark.parametrize('target', ['https://blocked.org/', 'https://a.blocked.org/',
+    'http://new.example.org/', 'https://169.254.169.254/', 'https://service.internal/'])
+def test_open_redirect_still_cannot_reach_prohibited_or_nonpublic_targets(target):
+    policy = {**POLICY, 'domain_access_mode': 'open_public_web', 'open_public_web_reviewed': True,
+              'prohibited_domains': ['blocked.org']}
+    adapter, calls, _, _ = fixture_adapter({('example.com', '/start'):Response(302, Location=target)})
+    with pytest.raises(PolicyError):adapter.fetch('https://example.com/start', policy)
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize('mode', ['allowlist', 'open_public_web'])
+@pytest.mark.parametrize('addresses', [{'127.0.0.1'}, {PUBLIC, '10.0.0.1'}, {'169.254.169.254'}, {'::1'}])
+def test_modes_preserve_public_dns_only_and_no_tcp_on_mixed_or_private_answers(mode, addresses):
+    policy = {**POLICY, 'domain_access_mode': mode, 'open_public_web_reviewed': True}
+    adapter, calls, _, _ = fixture_adapter(addresses=addresses)
+    with pytest.raises(PolicyError) as error:adapter.fetch('https://example.com/report', policy)
+    assert error.value.code == 'web_ssrf' and calls == []
+
+
+@pytest.mark.parametrize('mode', ['allowlist', 'open_public_web'])
+def test_modes_enforce_final_path_robots_after_redirect_and_content_restrictions(mode):
+    policy = {**POLICY, 'domain_access_mode': mode, 'open_public_web_reviewed': True}
+    responses = {('example.com', '/robots.txt'):Response(200, 'text/plain', b'User-agent: *\nDisallow: /private\n'),
+                 ('example.com', '/start'):Response(302, Location='/private/report')}
+    adapter, calls, _, _ = fixture_adapter(responses)
+    with pytest.raises(PolicyError) as error:adapter.fetch('https://example.com/start', policy)
+    assert error.value.code == 'web_robots_disallowed' and len(calls) == 3
+    adapter, _, _, _ = fixture_adapter({('example.com','/report'):Response(200,'application/javascript',b'alert(1)')})
+    with pytest.raises(PolicyError) as error:adapter.fetch('https://example.com/report', policy)
+    assert error.value.code == 'web_content_type'
+
+
+@pytest.mark.parametrize('patch', [{'domain_access_mode':'unexpected'}, {'domain_access_mode':[]},
+    {'domain_access_mode':'open_public_web'}, {'domain_access_mode':'open_public_web','open_public_web_reviewed':'true'}])
+def test_unreviewed_or_invalid_mode_fails_before_dns(patch):
+    adapter, calls, resolved, _ = fixture_adapter()
+    with pytest.raises(PolicyError):adapter.fetch('https://example.com/report', {**POLICY, **patch})
+    assert calls == resolved == []
+
+
+@pytest.mark.parametrize('mode', ['allowlist','open_public_web'])
+@pytest.mark.parametrize('response', [
+    Response(200,'text/html',HTML, **{'X-Robots-Tag':'noai'}),
+    Response(200,'text/html',HTML, **{'X-Robots-Tag':'JarvisResearch: nosnippet'}),
+    Response(200,'text/html',HTML, **{'TDM-Reservation':'1'}),
+    Response(200,'text/html',b'<meta name="robots" content="max-snippet:0"><p>Public text that is not available for AI extraction or snippet reuse.</p>'),
+    Response(200,'text/html',b'<meta name="tdm-reservation" content="1"><p>Text mining is reserved and this must not become evidence for agents.</p>'),
+])
+def test_explicit_machine_readable_reuse_restrictions_fail_closed(mode,response):
+    adapter, _, _, _=fixture_adapter({('example.com','/report'):response})
+    with pytest.raises(PolicyError) as error:
+        adapter.fetch('https://example.com/report',{**POLICY,'domain_access_mode':mode,'open_public_web_reviewed':True})
+    assert error.value.code=='web_reuse_restricted'
+
+
+@pytest.mark.parametrize('mode',['allowlist','open_public_web'])
+def test_robots_redirect_applies_same_prohibited_policy_before_target_dns(mode):
+    policy={**POLICY,'domain_access_mode':mode,'open_public_web_reviewed':True,'prohibited_domains':['blocked.org']}
+    adapter,calls,resolved,_=fixture_adapter({('example.com','/robots.txt'):
+        Response(302,'text/plain',b'',Location='https://blocked.org/robots.txt')})
+    with pytest.raises(PolicyError) as error:adapter.fetch('https://example.com/report',policy)
+    assert error.value.code=='web_domain_blocked'
+    assert len(calls)==1 and resolved==['example.com']
+
+
+def test_autonomous_domain_interval_is_preserved_by_the_page_transport():
+    policy={key:value for key,value in POLICY.items() if key!='minimum_interval_seconds'}
+    assert web._rules({**policy,'min_domain_interval_seconds':60})['minimum_interval_seconds']==60

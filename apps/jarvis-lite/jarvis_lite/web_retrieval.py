@@ -26,7 +26,7 @@ from .policy import PolicyError
 from .research import _Deadline, _PinnedHTTPSConnection, _resolve_addresses
 
 
-USER_AGENT = "JarvisResearch/1.5"
+USER_AGENT = "JarvisResearch/1.5.1"
 CONTENT_TYPES = frozenset({"text/html", "application/xhtml+xml", "application/pdf"})
 MAX_BYTES = 1024 * 1024
 MAX_TEXT = 32000
@@ -103,7 +103,8 @@ def _matches(host, domains):
 def _destination(value, rules):
     url = canonical_url(value)
     host = urlsplit(url).hostname
-    if _matches(host, rules["prohibited_domains"]) or not _matches(host, rules["allowed_domains"]):
+    if _matches(host, rules["prohibited_domains"]) or (rules.get("domain_access_mode", "allowlist") == "allowlist"
+            and not _matches(host, rules["allowed_domains"])):
         raise _error("web_domain_blocked", "Källans domän ligger utanför den förhandsgodkända policyn.")
     return url
 
@@ -111,9 +112,14 @@ def _destination(value, rules):
 def _rules(policy):
     if not isinstance(policy, dict) or policy.get("terms_reviewed") is not True:
         raise _error("web_terms_required", "Tillåtna domäners åtkomstvillkor måste granskas i policyn före hämtning.")
-    result = {"allowed_domains": _domains(policy.get("allowed_domains", [])),
+    mode = policy.get("domain_access_mode", "allowlist")
+    if mode not in ("allowlist", "open_public_web"):
+        raise _error("web_policy_invalid", "Välj tillåtelselista eller öppet offentligt webbläge.")
+    if mode == "open_public_web" and policy.get("open_public_web_reviewed") is not True:
+        raise _error("web_terms_required", "Öppet webbläge kräver en uttryckligen granskad läs- och karantänpolicy.")
+    result = {"domain_access_mode": mode, "allowed_domains": _domains(policy.get("allowed_domains", [])),
               "prohibited_domains": _domains(policy.get("prohibited_domains", []))}
-    if not result["allowed_domains"]:
+    if mode == "allowlist" and not result["allowed_domains"]:
         raise _error("web_domain_blocked", "Inga offentliga källdomäner har förhandsgodkänts.")
     types = policy.get("allowed_content_types", ["text/html", "application/pdf"])
     if (not isinstance(types, list) or not types or any(item not in CONTENT_TYPES for item in types)
@@ -122,12 +128,36 @@ def _rules(policy):
     result["allowed_content_types"] = types
     for name, default, low, high in (("timeout_seconds", 8, 1, 10), ("max_bytes", 524288, 1024, MAX_BYTES),
                                    ("max_redirects", 2, 0, 2), ("max_concurrent_requests", 1, 1, 2),
-                                   ("minimum_interval_seconds", 1, 0, 3600)):
+                                   ("minimum_interval_seconds", policy.get("min_domain_interval_seconds", 1), 0, 3600)):
         value = policy.get(name, default)
         if type(value) is not int or not low <= value <= high:
             raise _error("web_policy_invalid", "Webbhämtningens tids-, storleks- eller samtidighetsgräns är ogiltig.")
         result[name] = value
     return result
+
+
+def validate_destination(url, policy):
+    """Same URL/domain gate for discovery and every retrieval/robots hop; no DNS."""
+    return _destination(url, _rules(policy))
+
+
+def reuse_reviewed(urls, policy):
+    """Only the administrator's explicitly reviewed domain scope grants reuse.
+
+    Open access approval and robots permission do not establish website terms,
+    copyright permissions or a license. HTML/AI claims cannot expand this scope.
+    """
+    if policy.get("terms_reviewed") is not True or not urls:
+        return False
+    for value in urls:
+        try:
+            host = urlsplit(canonical_url(value)).hostname
+        except PolicyError:
+            return False
+        if (not _matches(host, policy.get("allowed_domains", []))
+                or _matches(host, policy.get("prohibited_domains", []))):
+            return False
+    return True
 
 
 def _public_address(value):
@@ -137,6 +167,10 @@ def _public_address(value):
                 not (isinstance(address, ipaddress.IPv6Address) and (address.sixtofour or address.teredo)))
     except ValueError:
         return False
+
+
+def _reuse_restricted(value):
+    return bool(re.search(r"(?:^|[\s,:;])(?:noai|nosnippet|none)(?:$|[\s,;])|max-snippet\s*:\s*0(?:$|[\s,;])", value, re.IGNORECASE))
 
 
 def _published(value):
@@ -171,6 +205,9 @@ class _HTMLText(HTMLParser):
         if tag == "meta":
             key = str(values.get("property") or values.get("name") or "").lower()
             content = values.get("content", "")
+            if ((key in {"robots", "jarvisresearch", "jarvisresearch/1.5.1"} and _reuse_restricted(str(content)))
+                    or key == "tdm-reservation" and str(content).strip() == "1"):
+                raise _error("web_reuse_restricted", "Källan reserverar textutvinning eller förbjuder AI-/utdragsanvändning.")
             if key in {"article:published_time", "date", "datepublished", "pubdate", "dc.date.issued"}:
                 self.published_at = self.published_at or _published(content)
             if key in {"og:site_name", "publisher", "dc.publisher"} and isinstance(content, str):
@@ -405,6 +442,9 @@ class PublicWebAdapter:
                 content_type = headers.get("content-type", "").split(";", 1)[0].strip().lower()
                 if content_type not in rules["allowed_content_types"]:
                     raise _error("web_content_type", "Källans innehållstyp ingår inte i den godkända policyn.", 422)
+                if (_reuse_restricted(headers.get("x-robots-tag", ""))
+                        or headers.get("tdm-reservation", "").strip() == "1"):
+                    raise _error("web_reuse_restricted", "Källans HTTP-villkor reserverar textutvinning eller AI-/utdragsanvändning.")
                 if content_type == "application/pdf":
                     extracted = _pdf(raw, deadline)
                 else:
@@ -420,11 +460,15 @@ class PublicWebAdapter:
                     extracted = parser.result()
                 deadline.remaining()
                 text = extracted["text"]
+                reviewed = reuse_reviewed([requested, current, *[hop["to"] for hop in redirects]], policy)
                 return {"requested_url": requested, "canonical_url": current, "title": extracted["title"] or urlsplit(current).hostname,
                     "text": text, "content_type": content_type, "retrieved_at": time.time(),
                     "published_at": extracted.get("published_at"), "publisher": extracted.get("publisher") or urlsplit(current).hostname,
                     "content_hash": hashlib.sha256(text.encode("utf-8")).hexdigest(), "retrieval_status": "SUCCESS",
-                    "robots_allowed": True, "terms_allowed": True, "untrusted_input": True,
+                    "robots_allowed": True,
+                    "terms_allowed": reviewed, "license_reviewed": reviewed,
+                    "legal_review_status": "ADMIN_REVIEWED_SCOPE" if reviewed else "UNVERIFIED",
+                    "untrusted_input": True,
                     "redirects": redirects, "byte_count": len(raw)}
             raise AssertionError("bounded page loop")
         except PolicyError:

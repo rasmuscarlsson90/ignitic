@@ -133,8 +133,23 @@ def evaluate_source(page, policy, *, now, goal=""):
     host = urlsplit(url).hostname or ""
     allowed = policy.get("allowed_domains", [])
     prohibited = policy.get("prohibited_domains", [])
-    if not isinstance(allowed, list) or not _matches(host, allowed):
+    mode = policy.get("domain_access_mode", "allowlist")
+    if mode not in ("allowlist", "open_public_web"):
+        reasons.append("domain_access_mode_invalid")
+    if mode == "allowlist" and not _matches(host, allowed):
         reasons.append("domain_outside_policy")
+    if mode == "open_public_web" and policy.get("open_public_web_reviewed") is not True:
+        reasons.append("open_public_web_review_required")
+    from .web_retrieval import reuse_reviewed
+    # Derive legal scope from server policy and every origin, never page/AI assertions.
+    redirects = page.get("redirects", [])
+    path_valid = isinstance(redirects, list) and all(isinstance(hop, dict) for hop in redirects)
+    origins = [page.get("requested_url", raw_url), raw_url]
+    if path_valid:
+        origins += [hop.get(key, "") for hop in redirects for key in ("from", "to")]
+    legal_reviewed = path_valid and reuse_reviewed(origins, policy)
+    if not legal_reviewed:
+        reasons.append("source_legal_review_required")
     if isinstance(prohibited, list) and _matches(host, prohibited):
         reasons.append("domain_prohibited")
     if policy.get("enabled") is not True:
@@ -188,12 +203,16 @@ def evaluate_source(page, policy, *, now, goal=""):
         "publisher_group": _publisher_group(host, policy), "category": category,
         "retrieved_at": retrieved, "published_at": page.get("published_at"), "content_type": content_type,
         "content_hash": digest, "text": content, "retrieval_status": page.get("retrieval_status"),
-        "status": "REJECTED" if reasons else "ACCEPTED", "reliability": reliability,
+        "status": ("REVIEW_REQUIRED" if reasons and set(reasons) <= {"source_legal_review_required", "retrieval_or_access_not_permitted"}
+                   and page.get("retrieval_status") == "SUCCESS" and page.get("robots_allowed") is True
+                   else "REJECTED" if reasons else "ACCEPTED"), "reliability": reliability,
+        "terms_reviewed": legal_reviewed, "license_reviewed": legal_reviewed,
+        "legal_review_reference": policy.get("terms_reference", "") if legal_reviewed else None,
         "reasons": list(dict.fromkeys(reasons)), "uncertainties": uncertainties,
         "policy_revision": policy.get("revision"), "untrusted_input": True,
         "max_source_age_days": maximum_age,
         "freshness": "CURRENT" if publication is not None and not any("stale" in reason or "future" in reason for reason in reasons) else "UNKNOWN",
-        "authenticity_method": "retrieved_https_origin_and_admin_reviewed_domain_policy",
+        "authenticity_method": "retrieved_https_origin_under_admin_access_policy",
         "relevance_method": "bounded_token_overlap_not_semantic_truth",
         "rationale": "Källans ursprung och åtkomst bedöms separat från stöd för ett visst påstående. Webbplatsens egen avsändaretikett är inte verifierad identitet.",
         "semantic_correctness_verified": False, "external_contact_authorized": False, "payment_authorized": False}
